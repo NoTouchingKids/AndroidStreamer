@@ -54,7 +54,7 @@ Or use Android Studio:
    - Bottom overlay should show:
      - **Frames**: Incrementing counter
      - **Dropped**: Should remain at 0 or very low
-     - **Buffer**: Should show occupancy (e.g., "2/120")
+     - **Buffer**: Should show occupancy (e.g., "2/30")
      - **FPS**: Should display current frame rate
 
 ### Expected Results (Phase 1)
@@ -198,10 +198,10 @@ D/CameraController: Frames: 120, Dropped: 1 (0.83%)
 
 | Occupancy | Interpretation |
 |-----------|---------------|
-| 0-5 frames | Healthy - consumer keeping up |
-| 5-20 frames | Moderate - some backlog building |
-| 20-60 frames | High - consumer struggling |
-| > 60 frames | Critical - about to drop frames |
+| 0-3 frames | Healthy - consumer keeping up |
+| 3-10 frames | Moderate - some backlog building |
+| 10-20 frames | High - consumer struggling |
+| > 20 frames | Critical - about to drop frames (capacity: 30) |
 
 ---
 
@@ -296,6 +296,11 @@ Once basic capture is working:
 - **One Memory Copy**: YUV data copied from `ImageProxy` to ring buffer
   - **Impact**: ~2-5ms additional latency per frame
   - **Future Fix**: Use MediaCodec input surface for true zero-copy
+
+- **Large Buffer Size for Raw YUV**: Ring buffer sized for uncompressed YUV frames
+  - **Current**: 3.1 MB per frame × 30 frames = ~93 MB off-heap memory
+  - **Impact**: Higher memory usage than final implementation
+  - **Future**: Once encoded, 200 KB × 120 frames = ~24 MB (74% reduction)
 
 - **Frame Rate Control**: Uses default camera frame rate (not locked to 60fps)
   - **Impact**: May run at 30fps on some devices

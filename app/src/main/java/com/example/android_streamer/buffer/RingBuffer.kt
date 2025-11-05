@@ -150,26 +150,42 @@ class RingBuffer(
 
     companion object {
         /**
-         * Create a RingBuffer sized for 1080p@60fps H.265 streaming.
+         * Create a RingBuffer sized for 1080p@60fps with RAW YUV 4:2:0 data.
          *
-         * Estimated I-frame size: ~150KB (1920x1080 * 0.075 bpp)
-         * Buffer count: 120 frames (2 seconds at 60fps)
+         * IMPORTANT: Currently sized for raw YUV frames (3.1 MB each), not encoded frames.
+         * Once MediaCodec encoder with input surface is implemented, this can be reduced
+         * to ~200KB per frame for encoded H.265 data.
+         *
+         * YUV 4:2:0 size calculation:
+         * - Y plane: 1920 × 1080 = 2,073,600 bytes
+         * - U plane: 960 × 540 = 518,400 bytes
+         * - V plane: 960 × 540 = 518,400 bytes
+         * - Total: 3,110,400 bytes ≈ 3.1 MB
+         *
+         * Buffer count: 30 frames (0.5 seconds at 60fps)
+         * Total memory: 3.1 MB × 30 = ~93 MB (off-heap)
          */
         fun createFor1080p60(): RingBuffer {
-            val bufferSize = 200 * 1024 // 200KB per buffer (safety margin for I-frames)
-            val capacity = 120 // 2 seconds @ 60fps
+            val width = 1920
+            val height = 1080
+            // YUV 4:2:0 format: Y plane + U plane (1/4) + V plane (1/4)
+            val bufferSize = (width * height * 3) / 2 // 3,110,400 bytes
+            val capacity = 30 // 0.5 seconds @ 60fps (reduced from 120 to save memory)
             return RingBuffer(capacity, bufferSize)
         }
 
         /**
-         * Create a RingBuffer sized for 4K@60fps H.265 streaming.
+         * Create a RingBuffer sized for 4K@60fps with RAW YUV 4:2:0 data.
          *
-         * Estimated I-frame size: ~600KB (3840x2160 * 0.075 bpp)
-         * Buffer count: 120 frames (2 seconds at 60fps)
+         * YUV 4:2:0 size: 3840 × 2160 × 1.5 = 12,441,600 bytes ≈ 12 MB per frame
+         * Buffer count: 15 frames (0.25 seconds at 60fps)
+         * Total memory: 12 MB × 15 = ~180 MB (off-heap)
          */
         fun createFor4K60(): RingBuffer {
-            val bufferSize = 800 * 1024 // 800KB per buffer (safety margin)
-            val capacity = 120 // 2 seconds @ 60fps
+            val width = 3840
+            val height = 2160
+            val bufferSize = (width * height * 3) / 2 // 12,441,600 bytes
+            val capacity = 15 // 0.25 seconds @ 60fps (smaller buffer due to memory)
             return RingBuffer(capacity, bufferSize)
         }
     }
