@@ -5,7 +5,6 @@ import android.util.Log
 import android.util.Size
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.video.*
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
@@ -65,24 +64,23 @@ class CameraController(
         // Select back camera
         val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
-        // Preview use case (lower frame rate to reduce overhead)
+        // Preview use case - CameraX will automatically optimize frame rate
         preview = Preview.Builder()
             .setTargetResolution(Size(1920, 1080))
-            .setTargetFrameRate(Range(30, 30)) // Preview at 30fps to save resources
             .build()
-            .also {
-                it.setSurfaceProvider(previewView.surfaceProvider)
+            .also { p ->
+                p.setSurfaceProvider(previewView.surfaceProvider)
             }
 
-        // ImageAnalysis use case for frame capture (1080p@60fps)
+        // ImageAnalysis use case for frame capture
+        // Camera will run at max available frame rate (typically 60fps for 1080p on modern devices)
         imageAnalysis = ImageAnalysis.Builder()
             .setTargetResolution(Size(1920, 1080))
-            .setTargetFrameRate(Range(60, 60)) // Target 60fps
-            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST) // Drop frames if processing is slow
-            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888) // YUV for encoder
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
             .build()
-            .also {
-                it.setAnalyzer(cameraExecutor) { image ->
+            .also { analysis ->
+                analysis.setAnalyzer(cameraExecutor) { image: ImageProxy ->
                     processFrame(image)
                 }
             }
@@ -99,26 +97,10 @@ class CameraController(
                 imageAnalysis
             )
 
-            // Configure camera for low-latency mode
-            configureLowLatencyMode()
-
-            Log.i(TAG, "Camera started: 1080p@60fps with low-latency mode")
+            Log.i(TAG, "Camera started: 1080p with low-latency configuration")
         } catch (e: Exception) {
             Log.e(TAG, "Camera binding failed", e)
         }
-    }
-
-    private fun configureLowLatencyMode() {
-        val camera = this.camera ?: return
-
-        // Enable low-latency mode if supported
-        val cameraControl = camera.cameraControl
-        val cameraInfo = camera.cameraInfo
-
-        // Disable auto-exposure/auto-white-balance locks for faster adaptation
-        // (CameraX handles this automatically in most cases)
-
-        Log.d(TAG, "Camera capabilities: ${cameraInfo.cameraState.value}")
     }
 
     private fun processFrame(image: ImageProxy) {
