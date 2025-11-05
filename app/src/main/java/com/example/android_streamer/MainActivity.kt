@@ -95,7 +95,7 @@ class MainActivity : AppCompatActivity() {
                     stats.droppedFrames,
                     dropRate
                 )
-                binding.tvBufferOccupancy.text = "Buffer: ${stats.bufferOccupancy}/30"
+                binding.tvBufferOccupancy.text = "Buffer: ${stats.bufferOccupancy}/20"
 
                 // Update every 500ms
                 handler.postDelayed(this, 500)

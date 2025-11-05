@@ -152,25 +152,32 @@ class RingBuffer(
         /**
          * Create a RingBuffer sized for 1080p@60fps with RAW YUV 4:2:0 data.
          *
-         * IMPORTANT: Currently sized for raw YUV frames (3.1 MB each), not encoded frames.
+         * IMPORTANT: Currently sized for raw YUV frames with stride padding.
          * Once MediaCodec encoder with input surface is implemented, this can be reduced
          * to ~200KB per frame for encoded H.265 data.
          *
-         * YUV 4:2:0 size calculation:
+         * YUV 4:2:0 size calculation (without padding):
          * - Y plane: 1920 × 1080 = 2,073,600 bytes
          * - U plane: 960 × 540 = 518,400 bytes
          * - V plane: 960 × 540 = 518,400 bytes
-         * - Total: 3,110,400 bytes ≈ 3.1 MB
+         * - Base total: 3,110,400 bytes ≈ 3.1 MB
          *
-         * Buffer count: 30 frames (0.5 seconds at 60fps)
-         * Total memory: 3.1 MB × 30 = ~93 MB (off-heap)
+         * STRIDE PADDING: Android camera YUV planes include row stride padding
+         * for memory alignment. We add 50% safety margin to handle this.
+         * - Actual size with padding: ~4.7 MB per frame
+         *
+         * Buffer count: 20 frames (0.33 seconds at 60fps)
+         * Total memory: 4.7 MB × 20 = ~94 MB (off-heap)
          */
         fun createFor1080p60(): RingBuffer {
             val width = 1920
             val height = 1080
             // YUV 4:2:0 format: Y plane + U plane (1/4) + V plane (1/4)
-            val bufferSize = (width * height * 3) / 2 // 3,110,400 bytes
-            val capacity = 30 // 0.5 seconds @ 60fps (reduced from 120 to save memory)
+            // Base size: (width × height × 3) / 2 = 3,110,400 bytes
+            // Add 50% safety margin for row stride padding (common in Android cameras)
+            val baseSize = (width * height * 3) / 2
+            val bufferSize = (baseSize * 3) / 2 // ~4.7 MB per frame with padding
+            val capacity = 20 // 0.33 seconds @ 60fps (reduced to keep memory reasonable)
             return RingBuffer(capacity, bufferSize)
         }
 

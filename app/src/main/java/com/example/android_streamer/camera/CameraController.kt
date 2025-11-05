@@ -150,6 +150,18 @@ class CameraController(
         val planes = image.planes
         var offset = 0
 
+        // Log image info on first frame for debugging
+        if (frameCount == 1L) {
+            Log.d(TAG, "Image dimensions: ${image.width}x${image.height}")
+            Log.d(TAG, "Y plane - rowStride: ${planes[0].rowStride}, pixelStride: ${planes[0].pixelStride}, size: ${planes[0].buffer.remaining()}")
+            Log.d(TAG, "U plane - rowStride: ${planes[1].rowStride}, pixelStride: ${planes[1].pixelStride}, size: ${planes[1].buffer.remaining()}")
+            Log.d(TAG, "V plane - rowStride: ${planes[2].rowStride}, pixelStride: ${planes[2].pixelStride}, size: ${planes[2].buffer.remaining()}")
+            Log.d(TAG, "Buffer capacity: ${buffer.capacity()}")
+
+            val totalSize = planes[0].buffer.remaining() + planes[1].buffer.remaining() + planes[2].buffer.remaining()
+            Log.d(TAG, "Total frame size with stride: $totalSize bytes")
+        }
+
         // Copy Y plane
         val yBuffer = planes[0].buffer
         val ySize = yBuffer.remaining()

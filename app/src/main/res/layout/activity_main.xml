@@ -54,7 +54,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Buffer: 0/30"
+            android:text="Buffer: 0/20"
             android:textColor="#51CF66"
             android:textSize="14sp"
             android:fontFamily="monospace" />
