@@ -34,7 +34,7 @@
             android:id="@+id/tvFrameCount"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Frames: 0"
+            android:text="Encoded: 0 (0 I-frames)"
             android:textColor="#FFFFFF"
             android:textSize="14sp"
             android:fontFamily="monospace" />
@@ -54,7 +54,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Buffer: 0/20"
+            android:text="Ring: 0/32"
             android:textColor="#51CF66"
             android:textSize="14sp"
             android:fontFamily="monospace" />
@@ -64,7 +64,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="FPS: 0.0"
+            android:text="Camera: 0 frames"
             android:textColor="#FFD93D"
             android:textSize="14sp"
             android:fontFamily="monospace" />

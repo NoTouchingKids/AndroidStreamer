@@ -10,29 +10,36 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.example.android_streamer.buffer.RingBuffer
 import com.example.android_streamer.camera.CameraController
 import com.example.android_streamer.databinding.ActivityMainBinding
+import com.example.android_streamer.encoder.H265Encoder
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var cameraController: CameraController
+    private lateinit var encoder: H265Encoder
 
     private val handler = Handler(Looper.getMainLooper())
-    private var lastFrameTime = 0L
-    private var frameCountForFps = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // Initialize encoder (1080p@60fps, 8 Mbps)
+        encoder = H265Encoder(
+            width = 1920,
+            height = 1080,
+            bitrate = 8_000_000, // 8 Mbps
+            frameRate = 60
+        )
+
         // Initialize camera controller
         cameraController = CameraController(this, this)
 
         // Check and request camera permissions
         if (allPermissionsGranted()) {
-            startCamera()
+            startCameraAndEncoder()
         } else {
             ActivityCompat.requestPermissions(
                 this,
@@ -45,57 +52,41 @@ class MainActivity : AppCompatActivity() {
         startStatsUpdater()
     }
 
-    private fun startCamera() {
-        cameraController.startCamera(binding.previewView) { readSlot ->
-            // Frame callback - this is where we'd send to encoder/network
-            processFrame(readSlot)
-        }
-        Log.i(TAG, "Camera started")
-    }
+    private fun startCameraAndEncoder() {
+        // Start encoder and get input surface
+        val encoderSurface = encoder.start()
 
-    private fun processFrame(readSlot: RingBuffer.ReadSlot) {
-        // Calculate FPS
-        val currentTime = System.currentTimeMillis()
-        if (lastFrameTime == 0L) {
-            lastFrameTime = currentTime
-        }
+        // Start camera with encoder surface
+        // NOTE: CameraX doesn't directly support arbitrary Surface targets
+        // This is a placeholder - full implementation needs Camera2 API
+        cameraController.startCamera(binding.previewView, encoderSurface)
 
-        frameCountForFps++
-
-        // Update FPS every second
-        val elapsed = currentTime - lastFrameTime
-        if (elapsed >= 1000) {
-            val fps = (frameCountForFps * 1000.0) / elapsed
-            lastFrameTime = currentTime
-            frameCountForFps = 0
-
-            // Update UI on main thread
-            handler.post {
-                binding.tvFps.text = String.format("FPS: %.1f", fps)
-            }
-        }
-
-        // TODO: Send frame to encoder/RTP packetizer
-        Log.v(TAG, "Frame received: ${readSlot.frameSize} bytes, timestamp: ${readSlot.timestampNs}")
+        Log.i(TAG, "Camera and encoder started")
     }
 
     private fun startStatsUpdater() {
         val updateRunnable = object : Runnable {
             override fun run() {
-                val stats = cameraController.getStats()
-                val dropRate = if (stats.totalFrames > 0) {
-                    (stats.droppedFrames.toFloat() / stats.totalFrames) * 100
+                val encoderStats = encoder.getStats()
+                val cameraStats = cameraController.getStats()
+
+                // Calculate drop rate
+                val totalFrames = encoderStats.encodedFrames + encoderStats.droppedFrames
+                val dropRate = if (totalFrames > 0) {
+                    (encoderStats.droppedFrames.toFloat() / totalFrames) * 100
                 } else {
                     0f
                 }
 
-                binding.tvFrameCount.text = "Frames: ${stats.totalFrames}"
+                // Update UI
+                binding.tvFrameCount.text = "Encoded: ${encoderStats.encodedFrames} (${encoderStats.keyFrames} I-frames)"
                 binding.tvDroppedFrames.text = String.format(
                     "Dropped: %d (%.2f%%)",
-                    stats.droppedFrames,
+                    encoderStats.droppedFrames,
                     dropRate
                 )
-                binding.tvBufferOccupancy.text = "Buffer: ${stats.bufferOccupancy}/20"
+                binding.tvBufferOccupancy.text = "Ring: ${encoderStats.ringOccupancy}/32"
+                binding.tvFps.text = "Camera: ${cameraStats.totalFrames} frames"
 
                 // Update every 500ms
                 handler.postDelayed(this, 500)
@@ -116,7 +107,7 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_CODE_PERMISSIONS) {
             if (allPermissionsGranted()) {
-                startCamera()
+                startCameraAndEncoder()
             } else {
                 Toast.makeText(
                     this,
@@ -130,6 +121,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        encoder.stop()
         cameraController.stopCamera()
         handler.removeCallbacksAndMessages(null)
     }

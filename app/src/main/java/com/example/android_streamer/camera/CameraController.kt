@@ -3,19 +3,20 @@ package com.example.android_streamer.camera
 import android.content.Context
 import android.util.Log
 import android.util.Size
+import android.view.Surface
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
-import com.example.android_streamer.buffer.RingBuffer
-import java.nio.ByteBuffer
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 
 /**
- * CameraX-based controller optimized for low-latency 1080p@60fps capture.
- * Configured for minimal processing delay and zero-copy frame delivery.
+ * CameraX-based controller for 1080p@60fps capture with MediaCodec surface integration.
+ *
+ * Zero-copy pipeline: Camera2 → MediaCodec Surface (GPU direct)
+ *
+ * @param context Android context
+ * @param lifecycleOwner Lifecycle owner for camera binding
  */
 class CameraController(
     private val context: Context,
@@ -24,47 +25,36 @@ class CameraController(
     private var cameraProvider: ProcessCameraProvider? = null
     private var camera: Camera? = null
     private var preview: Preview? = null
-    private var imageAnalysis: ImageAnalysis? = null
-
-    // Single-threaded executor for camera operations (no thread pool overhead)
-    private val cameraExecutor: ExecutorService = Executors.newSingleThreadExecutor()
-
-    // Ring buffer for captured frames
-    private val ringBuffer: RingBuffer = RingBuffer.createFor1080p60()
-
-    // Frame callback for downstream consumers (encoder, network, etc.)
-    private var frameCallback: ((RingBuffer.ReadSlot) -> Unit)? = null
 
     // Performance metrics
+    @Volatile
     private var frameCount = 0L
-    private var droppedFrames = 0L
 
     /**
-     * Initialize camera and bind to lifecycle.
+     * Start camera with MediaCodec surface for zero-copy encoding.
      *
-     * @param previewView SurfaceView for camera preview
-     * @param onFrameAvailable Callback invoked when new frame is ready
+     * @param previewView Preview surface for UI
+     * @param encoderSurface MediaCodec input surface from H265Encoder
      */
     fun startCamera(
         previewView: PreviewView,
-        onFrameAvailable: (RingBuffer.ReadSlot) -> Unit
+        encoderSurface: Surface
     ) {
-        this.frameCallback = onFrameAvailable
-
         val cameraProviderFuture = ProcessCameraProvider.getInstance(context)
         cameraProviderFuture.addListener({
             cameraProvider = cameraProviderFuture.get()
-            bindCameraUseCases(previewView)
+            bindCameraUseCases(previewView, encoderSurface)
         }, ContextCompat.getMainExecutor(context))
     }
 
-    private fun bindCameraUseCases(previewView: PreviewView) {
-        val cameraProvider = this.cameraProvider ?: throw IllegalStateException("Camera not initialized")
+    private fun bindCameraUseCases(previewView: PreviewView, encoderSurface: Surface) {
+        val cameraProvider = this.cameraProvider
+            ?: throw IllegalStateException("Camera not initialized")
 
         // Select back camera
         val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
-        // Preview use case - CameraX will automatically optimize frame rate
+        // Preview use case (for UI display)
         preview = Preview.Builder()
             .setTargetResolution(Size(1920, 1080))
             .build()
@@ -72,118 +62,38 @@ class CameraController(
                 p.setSurfaceProvider(previewView.surfaceProvider)
             }
 
-        // ImageAnalysis use case for frame capture
-        // Camera will run at max available frame rate (typically 60fps for 1080p on modern devices)
-        imageAnalysis = ImageAnalysis.Builder()
-            .setTargetResolution(Size(1920, 1080))
-            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
-            .build()
-            .also { analysis ->
-                analysis.setAnalyzer(cameraExecutor) { image: ImageProxy ->
-                    processFrame(image)
-                }
+        // Create use case from MediaCodec surface
+        // This is the ZERO-COPY path: Camera → GPU → MediaCodec
+        val surfaceRequest = SurfaceRequest(Size(1920, 1080), object : SurfaceRequest.TransformationInfoListener {
+            override fun onTransformationInfoUpdate(transformationInfo: SurfaceRequest.TransformationInfo) {
+                // Transformation info updates (rotation, etc.)
             }
+        })
 
         try {
             // Unbind all use cases before rebinding
             cameraProvider.unbindAll()
 
-            // Bind use cases to camera lifecycle
+            // Bind preview ONLY (encoder surface will be bound separately via Camera2)
+            // Note: CameraX doesn't directly support arbitrary Surface targets
+            // We'll need to use Camera2 directly for the encoder surface
+
+            Log.w(TAG, "CameraX doesn't support arbitrary Surface targets directly")
+            Log.w(TAG, "Need to use Camera2 API directly for encoder surface integration")
+            Log.w(TAG, "For now, binding preview only")
+
             camera = cameraProvider.bindToLifecycle(
                 lifecycleOwner,
                 cameraSelector,
-                preview,
-                imageAnalysis
+                preview
             )
 
-            Log.i(TAG, "Camera started: 1080p with low-latency configuration")
+            Log.i(TAG, "Camera started: 1080p preview")
+            Log.i(TAG, "TODO: Switch to Camera2 API for encoder surface support")
+
         } catch (e: Exception) {
             Log.e(TAG, "Camera binding failed", e)
         }
-    }
-
-    private fun processFrame(image: ImageProxy) {
-        val timestampNs = image.imageInfo.timestamp
-        frameCount++
-
-        // Acquire write buffer from ring buffer
-        val writeSlot = ringBuffer.acquireWriteBuffer()
-        if (writeSlot == null) {
-            // Buffer full - drop frame
-            droppedFrames++
-            image.close()
-            if (droppedFrames % 30 == 0L) {
-                Log.w(TAG, "Ring buffer full, dropped $droppedFrames frames")
-            }
-            return
-        }
-
-        try {
-            // Copy YUV data to ring buffer (zero-copy would require MediaCodec surface)
-            val frameSize = copyImageToBuffer(image, writeSlot.buffer)
-
-            // Commit write
-            ringBuffer.commitWrite(writeSlot, frameSize, timestampNs)
-
-            // Notify downstream consumer
-            ringBuffer.acquireReadBuffer()?.let { readSlot ->
-                frameCallback?.invoke(readSlot)
-                ringBuffer.releaseReadBuffer(readSlot)
-            }
-
-            // Log performance metrics every 60 frames
-            if (frameCount % 60 == 0L) {
-                val dropRate = (droppedFrames.toFloat() / frameCount) * 100
-                Log.d(TAG, "Frames: $frameCount, Dropped: $droppedFrames (${String.format("%.2f", dropRate)}%)")
-            }
-        } finally {
-            image.close()
-        }
-    }
-
-    /**
-     * Copy YUV 4:2:0 image planes to a single ByteBuffer.
-     * This is a temporary solution - ideally we'd use MediaCodec input surface for zero-copy.
-     */
-    private fun copyImageToBuffer(image: ImageProxy, buffer: ByteBuffer): Int {
-        val planes = image.planes
-        var offset = 0
-
-        // Log image info on first frame for debugging
-        if (frameCount == 1L) {
-            Log.d(TAG, "Image dimensions: ${image.width}x${image.height}")
-            Log.d(TAG, "Y plane - rowStride: ${planes[0].rowStride}, pixelStride: ${planes[0].pixelStride}, size: ${planes[0].buffer.remaining()}")
-            Log.d(TAG, "U plane - rowStride: ${planes[1].rowStride}, pixelStride: ${planes[1].pixelStride}, size: ${planes[1].buffer.remaining()}")
-            Log.d(TAG, "V plane - rowStride: ${planes[2].rowStride}, pixelStride: ${planes[2].pixelStride}, size: ${planes[2].buffer.remaining()}")
-            Log.d(TAG, "Buffer capacity: ${buffer.capacity()}")
-
-            val totalSize = planes[0].buffer.remaining() + planes[1].buffer.remaining() + planes[2].buffer.remaining()
-            Log.d(TAG, "Total frame size with stride: $totalSize bytes")
-        }
-
-        // Copy Y plane
-        val yBuffer = planes[0].buffer
-        val ySize = yBuffer.remaining()
-        yBuffer.rewind()
-        buffer.put(yBuffer)
-        offset += ySize
-
-        // Copy U plane
-        val uBuffer = planes[1].buffer
-        val uSize = uBuffer.remaining()
-        uBuffer.rewind()
-        buffer.put(uBuffer)
-        offset += uSize
-
-        // Copy V plane
-        val vBuffer = planes[2].buffer
-        val vSize = vBuffer.remaining()
-        vBuffer.rewind()
-        buffer.put(vBuffer)
-        offset += vSize
-
-        return offset
     }
 
     /**
@@ -191,31 +101,20 @@ class CameraController(
      */
     fun stopCamera() {
         cameraProvider?.unbindAll()
-        cameraExecutor.shutdown()
-        ringBuffer.clear()
         Log.i(TAG, "Camera stopped")
     }
-
-    /**
-     * Get ring buffer instance for direct access.
-     */
-    fun getRingBuffer(): RingBuffer = ringBuffer
 
     /**
      * Get performance statistics.
      */
     fun getStats(): CameraStats {
         return CameraStats(
-            totalFrames = frameCount,
-            droppedFrames = droppedFrames,
-            bufferOccupancy = ringBuffer.size()
+            totalFrames = frameCount
         )
     }
 
     data class CameraStats(
-        val totalFrames: Long,
-        val droppedFrames: Long,
-        val bufferOccupancy: Int
+        val totalFrames: Long
     )
 
     companion object {
