@@ -17,9 +17,78 @@ import androidx.core.content.ContextCompat
  *
  * True zero-copy pipeline: Camera2 → GPU → MediaCodec Surface (no CPU copy)
  *
- * Configures dual-surface capture session:
- * 1. Preview surface (for UI)
- * 2. Encoder surface (MediaCodec input surface)
+ * Supports dual-surface (preview + encoder) or encoder-only mode.
+ * For production streaming, use encoder-only to save GPU bandwidth.
+ *
+ * ## Expert Gotchas & Best Practices
+ *
+ * ### 1. Surface Lifecycle Management
+ * - Camera captures require VALID surfaces for entire session duration
+ * - MediaCodec surface MUST remain valid until encoder.stop()
+ * - Preview surface destroyed (e.g., app background) → session fails
+ * - Solution: Use encoder-only mode for production (no preview dependency)
+ *
+ * ### 2. Session Recreation Overhead
+ * - Cannot dynamically add/remove surfaces from active session
+ * - Must call session.close() + createCaptureSession() to change surfaces
+ * - Session creation takes ~100-500ms → drops 6-30 frames at 60fps
+ * - Solution: Decide preview on/off BEFORE starting, not during capture
+ *
+ * ### 3. GPU Bandwidth & Memory
+ * - Dual-surface means GPU writes SAME frame to TWO surfaces
+ * - At 1080p@60fps: ~373 MB/s per surface (746 MB/s total dual-surface)
+ * - GPU memory allocation: ~12 MB for dual-surface buffer pools
+ * - Preview during capture = wasted bandwidth + thermal throttling risk
+ * - Solution: Encoder-only mode (set previewSurface = null)
+ *
+ * ### 4. TEMPLATE_RECORD Optimization
+ * - TEMPLATE_RECORD optimizes for encoder surface, not preview quality
+ * - May apply aggressive noise reduction (higher latency) for encoding
+ * - Preview might look worse than TEMPLATE_PREVIEW
+ * - We disable NR/edge enhancement for lowest latency (see startRepeatingRequest)
+ * - Solution: Accept preview quality tradeoff, or use TEMPLATE_PREVIEW initially
+ *
+ * ### 5. Surface Format Constraints
+ * - MediaCodec surface format: PRIVATE (opaque GPU format)
+ * - Preview surface: PRIVATE or RGB_888
+ * - Camera must support PRIVATE format at target resolution/FPS
+ * - Check SCALER_STREAM_CONFIGURATION_MAP for ImageFormat.PRIVATE support
+ * - Solution: checkCapabilities() validates before starting
+ *
+ * ### 6. Frame Rate Stability
+ * - CONTROL_AE_TARGET_FPS_RANGE sets target, not guarantee
+ * - Actual FPS depends on: scene brightness, exposure time, processing load
+ * - Dark scenes → longer exposure → lower FPS (e.g., 30fps instead of 60fps)
+ * - Video stabilization adds ~5-15ms latency
+ * - Solution: Disable stabilization, ensure adequate lighting, fixed exposure if needed
+ *
+ * ### 7. Timestamp Synchronization
+ * - Camera timestamps (SENSOR_TIMESTAMP) in nanoseconds, monotonic clock
+ * - MediaCodec expects presentationTimeUs in microseconds
+ * - Must convert: presentationTimeUs = SENSOR_TIMESTAMP / 1000
+ * - Timestamp drift causes A/V sync issues in RTSP stream
+ * - Solution: Use SENSOR_TIMESTAMP from CaptureResult (not System.nanoTime())
+ *
+ * ### 8. Focus & Exposure Locks
+ * - CONTINUOUS_VIDEO AF constantly hunts → frame drops during refocus
+ * - Auto-exposure adjusts brightness → bitrate spikes (bright scenes = more bits)
+ * - For lowest latency: lock AF/AE after initial convergence
+ * - Solution: Add AF/AE lock after first 60 frames (1 second at 60fps)
+ *
+ * ### 9. Buffer Pool Exhaustion
+ * - Camera outputs to surfaces backed by BufferQueue (typically 3-4 buffers)
+ * - If MediaCodec is slow consuming → BufferQueue fills → camera stalls
+ * - Stall causes frame drops and jittery playback
+ * - MediaCodec with Surface input: async processing (no stall normally)
+ * - Solution: Monitor MediaCodec INFO_TRY_AGAIN_LATER events
+ *
+ * ### 10. Thermal Throttling
+ * - 1080p@60fps HEVC encoding = ~1.5W power draw
+ * - Camera sensor + ISP = ~0.5W
+ * - GPU surface ops = ~0.3W
+ * - Total: ~2.3W sustained → thermal throttling in 3-5 minutes
+ * - Throttling → FPS drop to 30fps, bitrate reduction
+ * - Solution: Monitor thermal state (PowerManager), reduce FPS/bitrate proactively
  *
  * @param context Android context
  */
@@ -38,17 +107,20 @@ class Camera2Controller(private val context: Context) {
     private var frameCount = 0L
 
     /**
-     * Start camera with dual surfaces (preview + encoder).
+     * Start camera with encoder surface (and optional preview).
      *
-     * @param previewSurface Surface for UI preview
-     * @param encoderSurface MediaCodec input surface
+     * IMPORTANT: For production streaming, set previewSurface = null to save GPU bandwidth.
+     * Preview consumes GPU memory/bandwidth and is unnecessary during capture.
+     *
+     * @param encoderSurface MediaCodec input surface (required)
+     * @param previewSurface Surface for UI preview (optional, null = encoder-only mode)
      * @param width Target width (1920)
      * @param height Target height (1080)
      * @param fps Target frame rate (60)
      */
     fun start(
-        previewSurface: Surface,
         encoderSurface: Surface,
+        previewSurface: Surface? = null,
         width: Int = 1920,
         height: Int = 1080,
         fps: Int = 60
@@ -90,20 +162,26 @@ class Camera2Controller(private val context: Context) {
     }
 
     /**
-     * Create capture session with dual surfaces.
+     * Create capture session with encoder surface (and optional preview).
      */
     private fun createCaptureSession(
         camera: CameraDevice,
-        previewSurface: Surface,
+        previewSurface: Surface?,
         encoderSurface: Surface,
         width: Int,
         height: Int,
         fps: Int
     ) {
         try {
-            // Create capture session with both surfaces
+            // Create capture session - encoder-only or dual-surface
+            val surfaces = if (previewSurface != null) {
+                listOf(previewSurface, encoderSurface)
+            } else {
+                listOf(encoderSurface)
+            }
+
             camera.createCaptureSession(
-                listOf(previewSurface, encoderSurface),
+                surfaces,
                 object : CameraCaptureSession.StateCallback() {
                     override fun onConfigured(session: CameraCaptureSession) {
                         Log.i(TAG, "Capture session configured")
@@ -123,23 +201,27 @@ class Camera2Controller(private val context: Context) {
     }
 
     /**
-     * Start repeating capture request to both surfaces.
+     * Start repeating capture request to encoder surface (and optional preview).
      */
     private fun startRepeatingRequest(
         session: CameraCaptureSession,
         camera: CameraDevice,
-        previewSurface: Surface,
+        previewSurface: Surface?,
         encoderSurface: Surface,
         width: Int,
         height: Int,
         fps: Int
     ) {
         try {
-            // Create capture request targeting both surfaces
+            // Create capture request targeting encoder (and optionally preview)
             val requestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
-                // Add both surfaces as targets
-                addTarget(previewSurface)
+                // Always add encoder surface
                 addTarget(encoderSurface)
+
+                // Optionally add preview surface
+                if (previewSurface != null) {
+                    addTarget(previewSurface)
+                }
 
                 // Configure for low-latency, high frame rate
                 set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
@@ -183,7 +265,8 @@ class Camera2Controller(private val context: Context) {
                 cameraHandler
             )
 
-            Log.i(TAG, "Started repeating capture request: ${width}x${height}@${fps}fps")
+            val mode = if (previewSurface != null) "dual-surface" else "encoder-only"
+            Log.i(TAG, "Started repeating capture request: ${width}x${height}@${fps}fps ($mode)")
 
         } catch (e: CameraAccessException) {
             Log.e(TAG, "Failed to start repeating request", e)

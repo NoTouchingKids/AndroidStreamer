@@ -26,6 +26,20 @@ class MainActivity : AppCompatActivity() {
     private var previewSurfaceReady = false
     private var encoderSurfaceReady = false
 
+    companion object {
+        private const val TAG = "MainActivity"
+        private const val REQUEST_CODE_PERMISSIONS = 10
+        private val REQUIRED_PERMISSIONS = arrayOf(Manifest.permission.CAMERA)
+
+        /**
+         * Enable preview during capture (for debug/setup only).
+         *
+         * FALSE (recommended): Encoder-only mode - saves GPU bandwidth, lower latency
+         * TRUE: Dual-surface mode - preview visible during capture (debug only)
+         */
+        private const val ENABLE_PREVIEW_DURING_CAPTURE = false
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -95,27 +109,41 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun tryStartCamera() {
-        // Wait for both surfaces to be ready
-        if (!previewSurfaceReady || !encoderSurfaceReady) {
+        // For encoder-only mode, only wait for encoder surface
+        // For dual-surface mode, wait for both surfaces
+        val surfacesReady = if (ENABLE_PREVIEW_DURING_CAPTURE) {
+            previewSurfaceReady && encoderSurfaceReady
+        } else {
+            encoderSurfaceReady
+        }
+
+        if (!surfacesReady) {
             Log.d(TAG, "Waiting for surfaces: preview=$previewSurfaceReady, encoder=$encoderSurfaceReady")
             return
         }
 
-        val previewSurface = binding.previewSurface.holder.surface
         val encoderSurface = encoder.start() // Get encoder surface
 
-        Log.i(TAG, "Starting Camera2 with dual surfaces")
+        // Conditionally add preview surface
+        val previewSurface = if (ENABLE_PREVIEW_DURING_CAPTURE && previewSurfaceReady) {
+            binding.previewSurface.holder.surface
+        } else {
+            null
+        }
 
-        // Start camera with both surfaces
+        val mode = if (previewSurface != null) "dual-surface (debug)" else "encoder-only (production)"
+        Log.i(TAG, "Starting Camera2 in $mode mode")
+
+        // Start camera (encoder-only or dual-surface)
         cameraController.start(
-            previewSurface = previewSurface,
             encoderSurface = encoderSurface,
+            previewSurface = previewSurface,
             width = 1920,
             height = 1080,
             fps = 60
         )
 
-        Log.i(TAG, "Camera2 started: TRUE ZERO-COPY PIPELINE ACTIVE!")
+        Log.i(TAG, "Camera2 started: TRUE ZERO-COPY PIPELINE ACTIVE ($mode)")
     }
 
     private fun startStatsUpdater() {
@@ -180,9 +208,4 @@ class MainActivity : AppCompatActivity() {
         handler.removeCallbacksAndMessages(null)
     }
 
-    companion object {
-        private const val TAG = "MainActivity"
-        private const val REQUEST_CODE_PERMISSIONS = 10
-        private val REQUIRED_PERMISSIONS = arrayOf(Manifest.permission.CAMERA)
-    }
 }
