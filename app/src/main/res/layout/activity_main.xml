@@ -8,15 +8,14 @@
     tools:context=".MainActivity">
 
     <!-- Camera Preview -->
-    <androidx.camera.view.PreviewView
-        android:id="@+id/previewView"
+    <SurfaceView
+        android:id="@+id/previewSurface"
         android:layout_width="0dp"
         android:layout_height="0dp"
         app:layout_constraintBottom_toTopOf="@+id/statsContainer"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent"
-        app:scaleType="fillCenter" />
+        app:layout_constraintTop_toTopOf="parent" />
 
     <!-- Stats Overlay -->
     <LinearLayout

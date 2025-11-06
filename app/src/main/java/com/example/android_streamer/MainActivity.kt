@@ -6,20 +6,25 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.SurfaceHolder
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.example.android_streamer.camera.CameraController
+import com.example.android_streamer.camera.Camera2Controller
 import com.example.android_streamer.databinding.ActivityMainBinding
 import com.example.android_streamer.encoder.H265Encoder
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
-    private lateinit var cameraController: CameraController
+    private lateinit var cameraController: Camera2Controller
     private lateinit var encoder: H265Encoder
 
     private val handler = Handler(Looper.getMainLooper())
+
+    // Track surface availability
+    private var previewSurfaceReady = false
+    private var encoderSurfaceReady = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,12 +39,40 @@ class MainActivity : AppCompatActivity() {
             frameRate = 60
         )
 
-        // Initialize camera controller
-        cameraController = CameraController(this, this)
+        // Initialize Camera2 controller
+        cameraController = Camera2Controller(this)
+
+        // Check camera capabilities
+        if (!cameraController.checkCapabilities(1920, 1080, 60)) {
+            Toast.makeText(
+                this,
+                "Device doesn't support 1080p@60fps",
+                Toast.LENGTH_LONG
+            ).show()
+            Log.w(TAG, "Device doesn't support target configuration, trying anyway...")
+        }
+
+        // Setup preview surface callback
+        binding.previewSurface.holder.addCallback(object : SurfaceHolder.Callback {
+            override fun surfaceCreated(holder: SurfaceHolder) {
+                Log.d(TAG, "Preview surface created")
+                previewSurfaceReady = true
+                tryStartCamera()
+            }
+
+            override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
+                Log.d(TAG, "Preview surface changed: ${width}x${height}")
+            }
+
+            override fun surfaceDestroyed(holder: SurfaceHolder) {
+                Log.d(TAG, "Preview surface destroyed")
+                previewSurfaceReady = false
+            }
+        })
 
         // Check and request camera permissions
         if (allPermissionsGranted()) {
-            startCameraAndEncoder()
+            initializeEncoder()
         } else {
             ActivityCompat.requestPermissions(
                 this,
@@ -52,16 +85,37 @@ class MainActivity : AppCompatActivity() {
         startStatsUpdater()
     }
 
-    private fun startCameraAndEncoder() {
+    private fun initializeEncoder() {
         // Start encoder and get input surface
-        val encoderSurface = encoder.start()
+        encoder.start()
+        encoderSurfaceReady = true
+        Log.i(TAG, "Encoder started, surface ready")
 
-        // Start camera with encoder surface
-        // NOTE: CameraX doesn't directly support arbitrary Surface targets
-        // This is a placeholder - full implementation needs Camera2 API
-        cameraController.startCamera(binding.previewView, encoderSurface)
+        tryStartCamera()
+    }
 
-        Log.i(TAG, "Camera and encoder started")
+    private fun tryStartCamera() {
+        // Wait for both surfaces to be ready
+        if (!previewSurfaceReady || !encoderSurfaceReady) {
+            Log.d(TAG, "Waiting for surfaces: preview=$previewSurfaceReady, encoder=$encoderSurfaceReady")
+            return
+        }
+
+        val previewSurface = binding.previewSurface.holder.surface
+        val encoderSurface = encoder.start() // Get encoder surface
+
+        Log.i(TAG, "Starting Camera2 with dual surfaces")
+
+        // Start camera with both surfaces
+        cameraController.start(
+            previewSurface = previewSurface,
+            encoderSurface = encoderSurface,
+            width = 1920,
+            height = 1080,
+            fps = 60
+        )
+
+        Log.i(TAG, "Camera2 started: TRUE ZERO-COPY PIPELINE ACTIVE!")
     }
 
     private fun startStatsUpdater() {
@@ -86,7 +140,7 @@ class MainActivity : AppCompatActivity() {
                     dropRate
                 )
                 binding.tvBufferOccupancy.text = "Ring: ${encoderStats.ringOccupancy}/32"
-                binding.tvFps.text = "Camera: ${cameraStats.totalFrames} frames"
+                binding.tvFps.text = "Camera: ${cameraStats.capturedFrames} frames"
 
                 // Update every 500ms
                 handler.postDelayed(this, 500)
@@ -107,7 +161,7 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_CODE_PERMISSIONS) {
             if (allPermissionsGranted()) {
-                startCameraAndEncoder()
+                initializeEncoder()
             } else {
                 Toast.makeText(
                     this,
@@ -121,8 +175,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        cameraController.stop()
         encoder.stop()
-        cameraController.stopCamera()
         handler.removeCallbacksAndMessages(null)
     }
 
