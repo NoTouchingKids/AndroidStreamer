@@ -25,6 +25,7 @@ class MainActivity : AppCompatActivity() {
     // Track surface availability
     private var previewSurfaceReady = false
     private var encoderSurfaceReady = false
+    private var encoderSurface: android.view.Surface? = null
 
     companion object {
         private const val TAG = "MainActivity"
@@ -100,8 +101,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun initializeEncoder() {
-        // Start encoder and get input surface
-        encoder.start()
+        // Start encoder and get input surface (only once!)
+        encoderSurface = encoder.start()
         encoderSurfaceReady = true
         Log.i(TAG, "Encoder started, surface ready")
 
@@ -122,7 +123,11 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val encoderSurface = encoder.start() // Get encoder surface
+        // Encoder surface already created in initializeEncoder()
+        val encoderSurface = this.encoderSurface ?: run {
+            Log.e(TAG, "Encoder surface is null!")
+            return
+        }
 
         // Conditionally add preview surface
         val previewSurface = if (ENABLE_PREVIEW_DURING_CAPTURE && previewSurfaceReady) {

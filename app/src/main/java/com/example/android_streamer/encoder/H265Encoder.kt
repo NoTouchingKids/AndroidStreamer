@@ -170,7 +170,7 @@ class H265Encoder(
                     // Keyframe: tiny bounded spin (128 × ~400ns = ~50μs)
                     var spinCount = 0
                     while (spinCount < 128 && !ring.offer(index)) {
-                        Thread.onSpinWait() // CPU hint for spin-wait
+                        // Busy-wait (Thread.onSpinWait not available on all Android 10 devices)
                         spinCount++
                     }
 
@@ -212,8 +212,9 @@ class H265Encoder(
                 val index = ring.poll()
 
                 if (index == -1) {
-                    // Ring empty - short park (~300ns on modern CPUs)
-                    Thread.onSpinWait()
+                    // Ring empty - yield to other threads
+                    // (Thread.onSpinWait not available on all Android 10 devices)
+                    Thread.yield()
                     continue
                 }
 
