@@ -46,15 +46,10 @@ dependencies {
     implementation(libs.material)
     implementation(libs.androidx.constraintlayout)
 
-    // CameraX
-    implementation(libs.androidx.camera.core)
-    implementation(libs.androidx.camera.camera2)
-    implementation(libs.androidx.camera.lifecycle)
-    implementation(libs.androidx.camera.video)
-    implementation(libs.androidx.camera.view)
-
     // Lifecycle
     implementation(libs.androidx.lifecycle.runtime.ktx)
+
+    // Camera2 API (android.hardware.camera2) is part of Android SDK, no dependencies needed
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
