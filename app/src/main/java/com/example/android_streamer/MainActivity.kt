@@ -148,6 +148,14 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        // Verify surface is valid
+        if (!encoderSurface.isValid) {
+            Log.e(TAG, "Encoder surface is INVALID! Surface was released or destroyed.")
+            updateStatus("Error: Encoder surface invalid")
+            return
+        }
+        Log.i(TAG, "Encoder surface is VALID (isValid=true)")
+
         // Conditionally add preview surface
         val previewSurface = if (ENABLE_PREVIEW_DURING_CAPTURE && previewSurfaceReady) {
             binding.previewSurface.holder.surface
@@ -276,6 +284,7 @@ class MainActivity : AppCompatActivity() {
         if (isCapturing) {
             stopCapture()
         }
+        cameraController.release()
         handler.removeCallbacksAndMessages(null)
     }
 

@@ -173,10 +173,25 @@ class Camera2Controller(private val context: Context) {
         fps: Int
     ) {
         try {
+            // Verify encoder surface is valid
+            if (!encoderSurface.isValid) {
+                Log.e(TAG, "Encoder surface is INVALID before creating session!")
+                return
+            }
+            Log.i(TAG, "Encoder surface is valid before session creation")
+
+            // Verify preview surface if provided
+            if (previewSurface != null && !previewSurface.isValid) {
+                Log.e(TAG, "Preview surface is INVALID before creating session!")
+                return
+            }
+
             // Create capture session - encoder-only or dual-surface
             val surfaces = if (previewSurface != null) {
+                Log.i(TAG, "Creating dual-surface session (preview + encoder)")
                 listOf(previewSurface, encoderSurface)
             } else {
+                Log.i(TAG, "Creating encoder-only session")
                 listOf(encoderSurface)
             }
 
@@ -184,19 +199,23 @@ class Camera2Controller(private val context: Context) {
                 surfaces,
                 object : CameraCaptureSession.StateCallback() {
                     override fun onConfigured(session: CameraCaptureSession) {
-                        Log.i(TAG, "Capture session configured")
+                        Log.i(TAG, "Capture session configured successfully")
                         captureSession = session
                         startRepeatingRequest(session, camera, previewSurface, encoderSurface, width, height, fps)
                     }
 
                     override fun onConfigureFailed(session: CameraCaptureSession) {
-                        Log.e(TAG, "Capture session configuration failed")
+                        Log.e(TAG, "Capture session configuration FAILED")
                     }
                 },
                 cameraHandler
             )
         } catch (e: CameraAccessException) {
             Log.e(TAG, "Failed to create capture session", e)
+        } catch (e: IllegalArgumentException) {
+            Log.e(TAG, "Invalid argument creating capture session (surface issue?)", e)
+        } catch (e: IllegalStateException) {
+            Log.e(TAG, "Illegal state creating capture session (camera closed?)", e)
         }
     }
 
@@ -259,7 +278,16 @@ class Camera2Controller(private val context: Context) {
                         request: CaptureRequest,
                         failure: CaptureFailure
                     ) {
-                        Log.w(TAG, "Capture failed: ${failure.reason}")
+                        // Only log first few failures to avoid spam
+                        if (frameCount <= 5) {
+                            val reasonStr = when (failure.reason) {
+                                CaptureFailure.REASON_ERROR -> "REASON_ERROR (generic error)"
+                                CaptureFailure.REASON_FLUSHED -> "REASON_FLUSHED (aborted)"
+                                else -> "UNKNOWN (${failure.reason})"
+                            }
+                            Log.w(TAG, "Capture failed: $reasonStr, frame=$failure.frameNumber, sequenceId=${failure.sequenceId}")
+                            Log.w(TAG, "  Was image captured: ${failure.wasImageCaptured()}")
+                        }
                     }
                 },
                 cameraHandler
@@ -286,6 +314,7 @@ class Camera2Controller(private val context: Context) {
 
     /**
      * Stop camera and release resources.
+     * Note: Handler thread is NOT stopped to allow restarting camera.
      */
     fun stop() {
         Log.i(TAG, "Stopping camera")
@@ -296,9 +325,21 @@ class Camera2Controller(private val context: Context) {
         cameraDevice?.close()
         cameraDevice = null
 
-        cameraThread.quitSafely()
+        // Do NOT quit handler thread - keep it alive for restart
+        // cameraThread.quitSafely()
 
         Log.i(TAG, "Camera stopped. Total frames: $frameCount")
+    }
+
+    /**
+     * Release all resources including handler thread.
+     * Call this when Camera2Controller is no longer needed.
+     */
+    fun release() {
+        Log.i(TAG, "Releasing Camera2Controller")
+        stop()
+        cameraThread.quitSafely()
+        Log.i(TAG, "Handler thread stopped")
     }
 
     /**

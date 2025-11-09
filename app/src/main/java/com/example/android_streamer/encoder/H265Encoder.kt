@@ -75,11 +75,21 @@ class H265Encoder(
             setInteger(MediaFormat.KEY_PREPEND_HEADER_TO_SYNC_FRAMES, 1) // Include SPS/PPS with keyframes
         }
 
+        Log.d(TAG, "Creating MediaCodec encoder...")
         mediaCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_HEVC).apply {
+            Log.d(TAG, "Setting callback...")
             setCallback(EncoderCallback(), null) // null = use codec's thread
+
+            Log.d(TAG, "Configuring encoder...")
             configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+
+            Log.d(TAG, "Creating input surface...")
             inputSurface = createInputSurface()
+            Log.i(TAG, "Input surface created: isValid=${inputSurface?.isValid}")
+
+            Log.d(TAG, "Starting MediaCodec...")
             start()
+            Log.i(TAG, "MediaCodec started successfully")
         }
 
         // Start consumer thread
@@ -89,7 +99,7 @@ class H265Encoder(
             start()
         }
 
-        Log.i(TAG, "H.265 encoder started")
+        Log.i(TAG, "H.265 encoder fully initialized. Surface valid: ${inputSurface?.isValid}")
         return inputSurface!!
     }
 
@@ -135,6 +145,8 @@ class H265Encoder(
 
         override fun onInputBufferAvailable(codec: MediaCodec, index: Int) {
             // Not used - camera renders directly to input surface
+            // This should NEVER be called when using surface input
+            Log.w(TAG, "onInputBufferAvailable called (unexpected for surface input!)")
         }
 
         override fun onOutputBufferAvailable(
@@ -142,8 +154,18 @@ class H265Encoder(
             index: Int,
             info: MediaCodec.BufferInfo
         ) {
+            // Log first few frames to verify we're receiving encoded data
+            if (encodedFrames < 5) {
+                Log.d(TAG, "onOutputBufferAvailable: index=$index, size=${info.size}, flags=${info.flags}, pts=${info.presentationTimeUs}")
+            }
+
             // Ignore empty buffers and codec config
             if (info.size == 0 || (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                if (info.size == 0) {
+                    Log.d(TAG, "Releasing empty buffer: index=$index")
+                } else {
+                    Log.d(TAG, "Releasing codec config buffer: index=$index, size=${info.size}")
+                }
                 codec.releaseOutputBuffer(index, false)
                 return
             }
@@ -188,11 +210,18 @@ class H265Encoder(
         }
 
         override fun onError(codec: MediaCodec, e: MediaCodec.CodecException) {
-            Log.e(TAG, "MediaCodec error", e)
+            Log.e(TAG, "MediaCodec error: ${e.message}", e)
+            Log.e(TAG, "  Error code: ${e.errorCode}")
+            Log.e(TAG, "  Is transient: ${e.isTransient}")
+            Log.e(TAG, "  Is recoverable: ${e.isRecoverable}")
+            Log.e(TAG, "  Diagnostic info: ${e.diagnosticInfo}")
         }
 
         override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
             Log.i(TAG, "Output format changed: $format")
+            Log.i(TAG, "  Width: ${format.getInteger(MediaFormat.KEY_WIDTH)}")
+            Log.i(TAG, "  Height: ${format.getInteger(MediaFormat.KEY_HEIGHT)}")
+            Log.i(TAG, "  Color format: ${format.getInteger(MediaFormat.KEY_COLOR_FORMAT)}")
         }
     }
 
