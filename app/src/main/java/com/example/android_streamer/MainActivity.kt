@@ -30,6 +30,11 @@ class MainActivity : AppCompatActivity() {
     // Track capture state
     private var isCapturing = false
 
+    // Video configuration (detected from device capabilities)
+    private val targetWidth = 1920
+    private val targetHeight = 1080
+    private var targetFps = 30 // Will be updated based on device support
+
     companion object {
         private const val TAG = "MainActivity"
         private const val REQUEST_CODE_PERMISSIONS = 10
@@ -49,26 +54,27 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Initialize encoder (1080p@60fps, 8 Mbps)
-        encoder = H265Encoder(
-            width = 1920,
-            height = 1080,
-            bitrate = 8_000_000, // 8 Mbps
-            frameRate = 60
-        )
-
-        // Initialize Camera2 controller
+        // Initialize Camera2 controller FIRST (need it for capability detection)
         cameraController = Camera2Controller(this)
 
-        // Check camera capabilities
-        if (!cameraController.checkCapabilities(1920, 1080, 60)) {
-            Toast.makeText(
-                this,
-                "Device doesn't support 1080p@60fps",
-                Toast.LENGTH_LONG
-            ).show()
-            Log.w(TAG, "Device doesn't support target configuration, trying anyway...")
-        }
+        // Detect maximum supported FPS for target resolution
+        targetFps = cameraController.getMaxSupportedFps(targetWidth, targetHeight)
+        Log.i(TAG, "Using configuration: ${targetWidth}x${targetHeight}@${targetFps}fps")
+
+        // Show user the detected configuration
+        Toast.makeText(
+            this,
+            "Detected: ${targetWidth}x${targetHeight}@${targetFps}fps",
+            Toast.LENGTH_SHORT
+        ).show()
+
+        // Initialize encoder with detected FPS
+        encoder = H265Encoder(
+            width = targetWidth,
+            height = targetHeight,
+            bitrate = 8_000_000, // 8 Mbps
+            frameRate = targetFps
+        )
 
         // Setup preview surface callback
         binding.previewSurface.holder.addCallback(object : SurfaceHolder.Callback {
@@ -166,13 +172,13 @@ class MainActivity : AppCompatActivity() {
         val mode = if (previewSurface != null) "dual-surface (debug)" else "encoder-only (production)"
         Log.i(TAG, "Starting Camera2 in $mode mode")
 
-        // Start camera
+        // Start camera with detected configuration
         cameraController.start(
             encoderSurface = encoderSurface,
             previewSurface = previewSurface,
-            width = 1920,
-            height = 1080,
-            fps = 60
+            width = targetWidth,
+            height = targetHeight,
+            fps = targetFps
         )
 
         isCapturing = true

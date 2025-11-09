@@ -350,6 +350,38 @@ class Camera2Controller(private val context: Context) {
     }
 
     /**
+     * Get maximum supported FPS for target resolution.
+     * Returns highest fixed FPS range (e.g., [30,30] or [60,60]).
+     */
+    fun getMaxSupportedFps(width: Int, height: Int): Int {
+        val cameraId = findBackCamera() ?: return 30 // Default fallback
+        val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+
+        // Get supported FPS ranges
+        val fpsRanges = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+
+        if (fpsRanges == null || fpsRanges.isEmpty()) {
+            Log.w(TAG, "No FPS ranges available, defaulting to 30fps")
+            return 30
+        }
+
+        // Find highest fixed FPS range (where lower == upper)
+        val fixedFpsRanges = fpsRanges.filter { it.lower == it.upper }
+        val maxFps = fixedFpsRanges.maxByOrNull { it.upper }?.upper
+
+        if (maxFps == null) {
+            Log.w(TAG, "No fixed FPS ranges found, using highest upper bound")
+            val fallback = fpsRanges.maxByOrNull { it.upper }?.upper ?: 30
+            Log.i(TAG, "Using FPS: $fallback (from variable range)")
+            return fallback
+        }
+
+        Log.i(TAG, "Supported fixed FPS ranges: ${fixedFpsRanges.map { "[${it.lower},${it.upper}]" }}")
+        Log.i(TAG, "Max supported FPS: $maxFps")
+        return maxFps
+    }
+
+    /**
      * Check if device supports target resolution and frame rate.
      */
     fun checkCapabilities(width: Int, height: Int, fps: Int): Boolean {
