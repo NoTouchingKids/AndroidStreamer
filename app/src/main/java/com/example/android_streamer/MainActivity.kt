@@ -27,6 +27,9 @@ class MainActivity : AppCompatActivity() {
     private var encoderSurfaceReady = false
     private var encoderSurface: android.view.Surface? = null
 
+    // Track capture state
+    private var isCapturing = false
+
     companion object {
         private const val TAG = "MainActivity"
         private const val REQUEST_CODE_PERMISSIONS = 10
@@ -72,7 +75,7 @@ class MainActivity : AppCompatActivity() {
             override fun surfaceCreated(holder: SurfaceHolder) {
                 Log.d(TAG, "Preview surface created")
                 previewSurfaceReady = true
-                tryStartCamera()
+                // Don't auto-start - wait for user button press
             }
 
             override fun surfaceChanged(holder: SurfaceHolder, format: Int, width: Int, height: Int) {
@@ -84,6 +87,15 @@ class MainActivity : AppCompatActivity() {
                 previewSurfaceReady = false
             }
         })
+
+        // Setup button handlers
+        binding.btnStart.setOnClickListener {
+            startCapture()
+        }
+
+        binding.btnStop.setOnClickListener {
+            stopCapture()
+        }
 
         // Check and request camera permissions
         if (allPermissionsGranted()) {
@@ -101,17 +113,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun initializeEncoder() {
-        // Start encoder and get input surface (only once!)
+        // Create encoder and get input surface
         encoderSurface = encoder.start()
         encoderSurfaceReady = true
-        Log.i(TAG, "Encoder started, surface ready")
+        Log.i(TAG, "Encoder initialized, surface ready")
 
-        tryStartCamera()
+        // Update UI status
+        updateStatus("Ready to capture")
     }
 
-    private fun tryStartCamera() {
-        // For encoder-only mode, only wait for encoder surface
-        // For dual-surface mode, wait for both surfaces
+    private fun startCapture() {
+        if (isCapturing) {
+            Log.w(TAG, "Already capturing!")
+            return
+        }
+
+        // Check surfaces are ready
         val surfacesReady = if (ENABLE_PREVIEW_DURING_CAPTURE) {
             previewSurfaceReady && encoderSurfaceReady
         } else {
@@ -119,13 +136,15 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (!surfacesReady) {
-            Log.d(TAG, "Waiting for surfaces: preview=$previewSurfaceReady, encoder=$encoderSurfaceReady")
+            Log.e(TAG, "Surfaces not ready: preview=$previewSurfaceReady, encoder=$encoderSurfaceReady")
+            updateStatus("Error: Surfaces not ready")
             return
         }
 
-        // Encoder surface already created in initializeEncoder()
+        // Get encoder surface
         val encoderSurface = this.encoderSurface ?: run {
             Log.e(TAG, "Encoder surface is null!")
+            updateStatus("Error: Encoder not initialized")
             return
         }
 
@@ -139,7 +158,7 @@ class MainActivity : AppCompatActivity() {
         val mode = if (previewSurface != null) "dual-surface (debug)" else "encoder-only (production)"
         Log.i(TAG, "Starting Camera2 in $mode mode")
 
-        // Start camera (encoder-only or dual-surface)
+        // Start camera
         cameraController.start(
             encoderSurface = encoderSurface,
             previewSurface = previewSurface,
@@ -148,7 +167,53 @@ class MainActivity : AppCompatActivity() {
             fps = 60
         )
 
+        isCapturing = true
+
+        // Update UI
+        binding.btnStart.isEnabled = false
+        binding.btnStop.isEnabled = true
+        updateStatus("Capturing...")
+
         Log.i(TAG, "Camera2 started: TRUE ZERO-COPY PIPELINE ACTIVE ($mode)")
+    }
+
+    private fun stopCapture() {
+        if (!isCapturing) {
+            Log.w(TAG, "Not capturing!")
+            return
+        }
+
+        Log.i(TAG, "Stopping capture...")
+
+        // Stop camera
+        cameraController.stop()
+
+        // Stop encoder
+        encoder.stop()
+
+        isCapturing = false
+
+        // Reinitialize encoder for next session
+        encoder = H265Encoder(
+            width = 1920,
+            height = 1080,
+            bitrate = 8_000_000,
+            frameRate = 60
+        )
+        initializeEncoder()
+
+        // Update UI
+        binding.btnStart.isEnabled = true
+        binding.btnStop.isEnabled = false
+        updateStatus("Ready to capture")
+
+        Log.i(TAG, "Capture stopped, ready for next session")
+    }
+
+    private fun updateStatus(status: String) {
+        runOnUiThread {
+            binding.tvStatus.text = "Status: $status"
+        }
     }
 
     private fun startStatsUpdater() {
@@ -208,8 +273,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        cameraController.stop()
-        encoder.stop()
+        if (isCapturing) {
+            stopCapture()
+        }
         handler.removeCallbacksAndMessages(null)
     }
 
