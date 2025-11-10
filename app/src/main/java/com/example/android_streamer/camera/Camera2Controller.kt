@@ -305,11 +305,36 @@ class Camera2Controller(private val context: Context) {
      * Find back camera ID.
      */
     private fun findBackCamera(): String? {
-        return cameraManager.cameraIdList.find { cameraId ->
+        // Log all available cameras for debugging
+        Log.i(TAG, "Available cameras on device:")
+        cameraManager.cameraIdList.forEach { id ->
+            val characteristics = cameraManager.getCameraCharacteristics(id)
+            val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
+            val facingStr = when (facing) {
+                CameraCharacteristics.LENS_FACING_BACK -> "BACK"
+                CameraCharacteristics.LENS_FACING_FRONT -> "FRONT"
+                CameraCharacteristics.LENS_FACING_EXTERNAL -> "EXTERNAL"
+                else -> "UNKNOWN"
+            }
+            val hardwareLevel = characteristics.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)
+            val levelStr = when (hardwareLevel) {
+                CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY -> "LEGACY"
+                CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED -> "LIMITED"
+                CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_FULL -> "FULL"
+                CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_3 -> "LEVEL_3"
+                else -> "UNKNOWN"
+            }
+            Log.i(TAG, "  Camera $id: $facingStr, Level: $levelStr")
+        }
+
+        val backCameraId = cameraManager.cameraIdList.find { cameraId ->
             val characteristics = cameraManager.getCameraCharacteristics(cameraId)
             val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
             facing == CameraCharacteristics.LENS_FACING_BACK
         }
+
+        Log.i(TAG, "Selected back camera: $backCameraId")
+        return backCameraId
     }
 
     /**
@@ -365,20 +390,47 @@ class Camera2Controller(private val context: Context) {
             return 30
         }
 
-        // Find highest fixed FPS range (where lower == upper)
-        val fixedFpsRanges = fpsRanges.filter { it.lower == it.upper }
-        val maxFps = fixedFpsRanges.maxByOrNull { it.upper }?.upper
-
-        if (maxFps == null) {
-            Log.w(TAG, "No fixed FPS ranges found, using highest upper bound")
-            val fallback = fpsRanges.maxByOrNull { it.upper }?.upper ?: 30
-            Log.i(TAG, "Using FPS: $fallback (from variable range)")
-            return fallback
+        // Log ALL available FPS ranges for debugging
+        Log.i(TAG, "All available FPS ranges for ${width}x${height}:")
+        fpsRanges.forEach { range ->
+            Log.i(TAG, "  [${range.lower}, ${range.upper}]")
         }
 
-        Log.i(TAG, "Supported fixed FPS ranges: ${fixedFpsRanges.map { "[${it.lower},${it.upper}]" }}")
-        Log.i(TAG, "Max supported FPS: $maxFps")
-        return maxFps
+        // Check for high-speed video configurations (often where 60fps lives)
+        val configMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+        val highSpeedSizes = configMap?.highSpeedVideoSizes
+        if (highSpeedSizes != null && highSpeedSizes.isNotEmpty()) {
+            Log.i(TAG, "High-speed video sizes available:")
+            highSpeedSizes.forEach { size ->
+                val highSpeedRanges = configMap.getHighSpeedVideoFpsRangesFor(size)
+                Log.i(TAG, "  ${size.width}x${size.height}: ${highSpeedRanges.map { "[${it.lower},${it.upper}]" }}")
+            }
+        }
+
+        // Strategy 1: Try to find fixed FPS range (where lower == upper)
+        val fixedFpsRanges = fpsRanges.filter { it.lower == it.upper }
+        val maxFixedFps = fixedFpsRanges.maxByOrNull { it.upper }?.upper
+
+        // Strategy 2: Check if there's a variable range that includes our target FPS
+        // For example, [30,60] means we can request 60fps
+        val maxVariableFps = fpsRanges.maxByOrNull { it.upper }?.upper ?: 30
+
+        Log.i(TAG, "Fixed FPS ranges: ${fixedFpsRanges.map { "[${it.lower},${it.upper}]" }}")
+        Log.i(TAG, "Max fixed FPS: $maxFixedFps")
+        Log.i(TAG, "Max variable FPS: $maxVariableFps")
+
+        // Prefer fixed FPS if available, otherwise use max from variable range
+        val selectedFps = maxFixedFps ?: maxVariableFps
+
+        // If we have a variable range that goes up to 60, we can use 60
+        val has60FpsRange = fpsRanges.any { it.upper >= 60 }
+        if (has60FpsRange && selectedFps < 60) {
+            Log.i(TAG, "Found FPS range supporting 60fps, using 60fps instead of $selectedFps")
+            return 60
+        }
+
+        Log.i(TAG, "Selected FPS: $selectedFps")
+        return selectedFps
     }
 
     /**
