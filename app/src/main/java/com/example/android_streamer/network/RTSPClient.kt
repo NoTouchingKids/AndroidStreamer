@@ -135,11 +135,9 @@ class RTSPClient(
      * Send OPTIONS request.
      */
     private fun sendOptions(): Boolean {
-        val request = """
-            OPTIONS rtsp://$serverIp:$serverPort$streamPath RTSP/1.0
-            CSeq: ${cseq++}
-
-        """.trimIndent() + "\r\n"
+        val request = "OPTIONS rtsp://$serverIp:$serverPort$streamPath RTSP/1.0\r\n" +
+                      "CSeq: ${cseq++}\r\n" +
+                      "\r\n"
 
         return sendRequestAndCheckResponse(request, "OPTIONS")
     }
@@ -150,14 +148,12 @@ class RTSPClient(
     private fun sendAnnounce(): Boolean {
         val sdp = buildSDP()
 
-        val request = """
-            ANNOUNCE rtsp://$serverIp:$serverPort$streamPath RTSP/1.0
-            CSeq: ${cseq++}
-            Content-Type: application/sdp
-            Content-Length: ${sdp.length}
-
-            $sdp
-        """.trimIndent() + "\r\n"
+        val request = "ANNOUNCE rtsp://$serverIp:$serverPort$streamPath RTSP/1.0\r\n" +
+                      "CSeq: ${cseq++}\r\n" +
+                      "Content-Type: application/sdp\r\n" +
+                      "Content-Length: ${sdp.length}\r\n" +
+                      "\r\n" +
+                      sdp
 
         return sendRequestAndCheckResponse(request, "ANNOUNCE")
     }
@@ -166,12 +162,10 @@ class RTSPClient(
      * Send SETUP request to negotiate RTP transport.
      */
     private fun sendSetup(): Boolean {
-        val request = """
-            SETUP rtsp://$serverIp:$serverPort$streamPath/track0 RTSP/1.0
-            CSeq: ${cseq++}
-            Transport: RTP/AVP;unicast;client_port=$clientRtpPort-${clientRtpPort + 1}
-
-        """.trimIndent() + "\r\n"
+        val request = "SETUP rtsp://$serverIp:$serverPort$streamPath/track0 RTSP/1.0\r\n" +
+                      "CSeq: ${cseq++}\r\n" +
+                      "Transport: RTP/AVP;unicast;client_port=$clientRtpPort-${clientRtpPort + 1}\r\n" +
+                      "\r\n"
 
         val response = sendRequestAndGetResponse(request, "SETUP") ?: return false
 
@@ -205,13 +199,11 @@ class RTSPClient(
             return false
         }
 
-        val request = """
-            RECORD rtsp://$serverIp:$serverPort$streamPath RTSP/1.0
-            CSeq: ${cseq++}
-            Session: $session
-            Range: npt=0.000-
-
-        """.trimIndent() + "\r\n"
+        val request = "RECORD rtsp://$serverIp:$serverPort$streamPath RTSP/1.0\r\n" +
+                      "CSeq: ${cseq++}\r\n" +
+                      "Session: $session\r\n" +
+                      "Range: npt=0.000-\r\n" +
+                      "\r\n"
 
         return sendRequestAndCheckResponse(request, "RECORD")
     }
@@ -281,21 +273,18 @@ class RTSPClient(
         val spsParam = sps ?: ""
         val ppsParam = pps ?: ""
 
-        return """
-v=0
-o=- 0 0 IN IP4 127.0.0.1
-s=Android H.265 Stream
-c=IN IP4 $serverIp
-t=0 0
-a=tool:AndroidStreamer
-a=type:broadcast
-a=control:*
-m=video $clientRtpPort RTP/AVP 96
-a=rtpmap:96 H265/90000
-a=fmtp:96 sprop-sps=$spsParam;sprop-pps=$ppsParam
-a=control:track0
-
-""".trimIndent()
+        return "v=0\r\n" +
+               "o=- 0 0 IN IP4 127.0.0.1\r\n" +
+               "s=Android H.265 Stream\r\n" +
+               "c=IN IP4 $serverIp\r\n" +
+               "t=0 0\r\n" +
+               "a=tool:AndroidStreamer\r\n" +
+               "a=type:broadcast\r\n" +
+               "a=control:*\r\n" +
+               "m=video $clientRtpPort RTP/AVP 96\r\n" +
+               "a=rtpmap:96 H265/90000\r\n" +
+               "a=fmtp:96 sprop-sps=$spsParam;sprop-pps=$ppsParam\r\n" +
+               "a=control:track0\r\n"
     }
 
     /**
@@ -307,12 +296,10 @@ a=control:track0
         try {
             // Send TEARDOWN if we have a session
             sessionId?.let { session ->
-                val request = """
-                    TEARDOWN rtsp://$serverIp:$serverPort$streamPath RTSP/1.0
-                    CSeq: ${cseq++}
-                    Session: $session
-
-                """.trimIndent() + "\r\n"
+                val request = "TEARDOWN rtsp://$serverIp:$serverPort$streamPath RTSP/1.0\r\n" +
+                              "CSeq: ${cseq++}\r\n" +
+                              "Session: $session\r\n" +
+                              "\r\n"
 
                 writer?.print(request)
                 writer?.flush()
