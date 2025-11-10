@@ -1,8 +1,12 @@
 # MediaMTX Setup for AndroidStreamer
 
-This guide explains how to configure MediaMTX to receive H.265 RTP streams from AndroidStreamer.
+This guide explains how to configure MediaMTX to receive H.265 streams from AndroidStreamer.
 
-## Quick Start
+## Recommended: RTSP Server Mode
+
+AndroidStreamer now runs an **RTSP server** on your Android device. MediaMTX connects to your Android device to pull the stream. This is the **standard and most reliable** approach.
+
+## Quick Start (RTSP Server Mode)
 
 ### 1. Install MediaMTX
 
@@ -14,68 +18,86 @@ wget https://github.com/bluenviron/mediamtx/releases/latest/download/mediamtx_li
 tar -xzf mediamtx_linux_amd64.tar.gz
 ```
 
-### 2. Configure MediaMTX
+### 2. Find Your Android Device IP
+
+On your Android device, check your WiFi IP address:
+- Settings → Network & Internet → WiFi → [Your Network] → IP address
+- Example: `192.168.1.50`
+
+### 3. Configure MediaMTX
 
 Edit `mediamtx.yml`:
 
 ```yaml
 paths:
   android:
-    # Accept RTP stream from Android device
-    # Use port 8000 (MediaMTX default RTP port shown in logs)
-    source: rtp://0.0.0.0:8000
-    sourceProtocol: rtp
+    # MediaMTX connects to RTSP server running on Android device
+    source: rtsp://192.168.1.50:8554/live  # Replace with your Android IP
+    sourceProtocol: tcp
+
+    # Low latency settings
+    readTimeout: 10s
+    readBuffer: 512KB
 
     # Optional: Enable recording
     # record: yes
     # recordPath: ./recordings/%path/%Y-%m-%d_%H-%M-%S
 ```
 
-**Note:** MediaMTX shows its RTP port in the logs:
-```
-INF [RTSP] listener opened on :8554 (TCP), :8000 (UDP/RTP), :8001 (UDP/RTCP)
-                                             ^^^^^ Use this port
-```
+**Replace `192.168.1.50` with your Android device's IP address!**
 
-### 3. Start MediaMTX
+### 4. Start MediaMTX
 
 ```bash
 ./mediamtx
 ```
 
-You should see:
-```
-INF [path android] ready to receive: [source rtp://0.0.0.0:5004]
-```
+### 5. Configure AndroidStreamer
 
-### 4. Configure AndroidStreamer
-
-In `MainActivity.kt`, update the server IP:
+In `MainActivity.kt`, verify RTSP server mode is enabled (default):
 
 ```kotlin
-private const val RTP_SERVER_IP = "192.168.1.100"  // Your MediaMTX server IP
-private const val RTP_SERVER_PORT = 8000            // MediaMTX default RTP port
+private const val ENABLE_NETWORK_STREAMING = true
+private const val USE_RTSP_SERVER_MODE = true     // RTSP server mode (recommended)
+private const val RTSP_SERVER_PORT = 8554         // RTSP control port
+private const val RTP_PORT = 5004                 // RTP data port
 ```
 
-### 5. Start Streaming
+### 6. Start Streaming
 
-1. Start MediaMTX server
-2. Launch AndroidStreamer app on your Android device
+1. Launch AndroidStreamer app on your device
+2. The app will show: `RTSP: rtsp://YOUR_ANDROID_IP:8554/live`
 3. Tap "START CAPTURE"
+4. MediaMTX will connect and start receiving the stream
 
-### 6. View Stream
+### 7. View Stream
 
-Access the stream via RTSP:
+Access the stream via RTSP (from MediaMTX server):
 
 ```bash
-# VLC
+# VLC (replace 192.168.1.100 with your MediaMTX server IP)
 vlc rtsp://192.168.1.100:8554/android
 
-# ffplay
+# ffplay (low latency)
 ffplay -fflags nobuffer -flags low_delay rtsp://192.168.1.100:8554/android
 
 # Web browser (if MediaMTX WebRTC is enabled)
 http://192.168.1.100:8889/android
+```
+
+## How It Works
+
+```
+Android Device (RTSP Server)    MediaMTX Server (RTSP Client)    Viewers
+┌──────────────────────────┐   ┌──────────────────────────┐    ┌──────────┐
+│  Camera2 → H.265 Encoder │   │                          │    │   VLC    │
+│           ↓              │   │  RTSP Connect            │    │          │
+│  RTSP Server :8554       │←──│  (pulls from Android)    │    │  ffplay  │
+│  (TCP handshake)         │   │          ↓               │    │          │
+│           ↓              │   │  Receives RTP/UDP        │    │  Browser │
+│  RTP Sender              │───│→ Decodes H.265           │────│→         │
+│  (UDP :5004)             │   │  Re-streams RTSP/WebRTC  │    │          │
+└──────────────────────────┘   └──────────────────────────┘    └──────────┘
 ```
 
 ## Network Requirements
@@ -83,36 +105,42 @@ http://192.168.1.100:8889/android
 - **Local network only** (same WiFi/LAN)
 - **Gigabit recommended** for 1080p@30fps at 8Mbps
 - **Low latency network** (<1ms RTT preferred)
-
-## Architecture
-
-```
-Android Device                    MediaMTX Server                Viewers
-┌──────────────┐                 ┌──────────────┐              ┌──────────┐
-│   Camera2    │                 │              │              │   VLC    │
-│      ↓       │   RTP/UDP       │   Receive    │   RTSP      │          │
-│  MediaCodec  │─────5004───────→│   RTP H.265  │────8554────→│  ffplay  │
-│   (H.265)    │                 │      ↓       │              │          │
-│      ↓       │                 │   Re-stream  │   WebRTC    │  Browser │
-│  RTPSender   │                 │   RTSP/WebRTC│────8889────→│          │
-└──────────────┘                 └──────────────┘              └──────────┘
-```
+- **Android and MediaMTX must be on the same network**
 
 ## Troubleshooting
 
-### No stream appears in MediaMTX
+### MediaMTX cannot connect to Android
 
-1. Check firewall allows UDP port 5004:
+1. **Verify Android IP is correct:**
+   - Check WiFi settings on Android device
+   - Update `mediamtx.yml` with correct IP
+
+2. **Check firewall allows TCP port 8554 and UDP port 5004:**
    ```bash
+   # On Android device's network/router
+   sudo ufw allow 8554/tcp
    sudo ufw allow 5004/udp
    ```
 
-2. Verify Android and server are on same network:
+3. **Verify Android and MediaMTX are on same network:**
    ```bash
-   ping 192.168.1.100
+   ping YOUR_ANDROID_IP
    ```
 
-3. Check MediaMTX logs for incoming packets
+4. **Check MediaMTX logs** for connection attempts:
+   ```
+   INF [path android] [conn] opened
+   ERR [path android] connection failed: ...
+   ```
+
+### Stream appears but no video
+
+1. **Check H.265 codec support** in your viewer (VLC, ffplay)
+
+2. **Check MediaMTX logs** for stream info:
+   ```
+   INF [path android] stream ready
+   ```
 
 ### Stream stutters or drops frames
 
@@ -187,34 +215,62 @@ paths:
 
 Typical performance on local gigabit network:
 
-- **Latency**: 50-100ms glass-to-glass
-- **Packet loss**: 0%
+- **Latency**: 50-150ms glass-to-glass (RTSP handshake + encoding + network)
+- **Packet loss**: 0% (local network)
 - **Throughput**: 8Mbps steady
 - **Frame drops**: 0 (100% efficiency)
 
+## Legacy: Raw RTP Mode (Not Recommended)
+
+The old raw RTP push mode is still available but **not recommended** because:
+- MediaMTX may not recognize stream without SDP
+- No proper handshake or session management
+- Less reliable connection
+
+If you still want to use it:
+
+1. Set in `MainActivity.kt`:
+   ```kotlin
+   private const val USE_RTSP_SERVER_MODE = false
+   private const val RTP_SERVER_IP = "192.168.1.100"  // MediaMTX server IP
+   private const val RTP_SERVER_PORT = 8000
+   ```
+
+2. Configure `mediamtx.yml`:
+   ```yaml
+   paths:
+     android:
+       source: rtp://0.0.0.0:8000
+       sourceProtocol: rtp
+   ```
+
+3. This was the old approach where Android blindly sends UDP packets to MediaMTX without proper negotiation.
+
 ## Protocol Details
 
-RTP packets sent by AndroidStreamer:
+**RTSP Handshake (TCP):**
+```
+Android (Server)          MediaMTX (Client)
+    |<--- OPTIONS ---|
+    |--- 200 OK ---->|
+    |<--- DESCRIBE ---|
+    |--- SDP ------->|  (H.265 codec info)
+    |<--- SETUP ---|
+    |--- 200 OK ---->|  (negotiate RTP port)
+    |<--- PLAY ----|
+    |--- 200 OK ---->|  (start streaming)
+```
 
+**RTP Streaming (UDP):**
 ```
 Small Frames (< 1400 bytes):
-[12 bytes] RTP Header
-  - Version: 2
-  - Payload Type: 96 (H.265)
-  - Sequence Number: Incremental
-  - Timestamp: 90kHz clock
-  - SSRC: 0x12345678
-  - Marker bit: 1
-[N bytes] Complete H.265 NAL unit
+[12 bytes] RTP Header (v=2, PT=96, SSRC=0x12345678)
+[N bytes]  H.265 NAL unit
 
 Large Frames (> 1400 bytes):
-Fragmented into multiple packets using H.265 FU (Fragmentation Units):
 [12 bytes] RTP Header
-[3 bytes]  FU Header (type=49, S/E bits for start/end)
+[3 bytes]  H.265 FU Header (type=49)
 [~1385 bytes] Fragment payload
 
-- Regular frames: ~30-50KB (sent as single packet or 2-3 fragments)
-- Keyframes: ~80-180KB (fragmented into 60-130 packets)
+Keyframes: ~80-180KB → fragmented into 60-130 packets
 ```
-
-MediaMTX receives and reassembles these RTP packets, then re-streams via RTSP/WebRTC/HLS.

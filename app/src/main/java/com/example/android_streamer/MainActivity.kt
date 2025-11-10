@@ -15,12 +15,15 @@ import com.example.android_streamer.camera.Camera2Controller
 import com.example.android_streamer.databinding.ActivityMainBinding
 import com.example.android_streamer.encoder.H265Encoder
 import com.example.android_streamer.network.RTPSender
+import com.example.android_streamer.network.RTSPServer
+import java.net.NetworkInterface
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var cameraController: Camera2Controller
     private lateinit var encoder: H265Encoder
     private var rtpSender: RTPSender? = null
+    private var rtspServer: RTSPServer? = null
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -53,27 +56,36 @@ class MainActivity : AppCompatActivity() {
         /**
          * Network streaming configuration for MediaMTX server.
          *
-         * ENABLE_NETWORK_STREAMING: Set to true to send encoded video over RTP to MediaMTX
-         * RTP_SERVER_IP: IP address of MediaMTX server (LOCAL NETWORK ONLY!)
-         * RTP_SERVER_PORT: UDP port for RTP stream (default 8000, check MediaMTX logs)
+         * ENABLE_NETWORK_STREAMING: Set to true to enable streaming to MediaMTX
+         * USE_RTSP_SERVER_MODE: TRUE (recommended) - Android runs RTSP server, MediaMTX connects to Android
+         *                       FALSE - Android pushes raw RTP to MediaMTX (may not work)
          *
-         * MediaMTX shows the RTP port in its logs:
-         *   "INF [RTSP] listener opened on :8554 (TCP), :8000 (UDP/RTP), :8001 (UDP/RTCP)"
-         *                                              ^^^^^ Use this port
+         * RTSP Server Mode (USE_RTSP_SERVER_MODE = true):
+         *   Android device runs RTSP server on port 8554
+         *   MediaMTX connects to: rtsp://ANDROID_IP:8554/live
          *
-         * MediaMTX Configuration (mediamtx.yml):
+         *   MediaMTX Configuration (mediamtx.yml):
          *   paths:
          *     android:
-         *       source: rtp://0.0.0.0:8000
-         *       sourceProtocol: rtp
+         *       source: rtsp://192.168.1.50:8554/live  # Your Android device IP
+         *       sourceProtocol: tcp
          *
-         * View stream: rtsp://server:8554/android
+         * Raw RTP Mode (USE_RTSP_SERVER_MODE = false - NOT RECOMMENDED):
+         *   Android pushes RTP to MediaMTX (may not work reliably)
+         *   Requires RTP_SERVER_IP and RTP_SERVER_PORT configuration
+         *
+         * View stream: rtsp://MEDIAMTX_IP:8554/android
          *
          * See MEDIAMTX_SETUP.md for detailed setup instructions.
          */
         private const val ENABLE_NETWORK_STREAMING = true
-        private const val RTP_SERVER_IP = "192.168.1.100" // Change to your MediaMTX server IP
-        private const val RTP_SERVER_PORT = 8000          // MediaMTX default RTP port
+        private const val USE_RTSP_SERVER_MODE = true     // Recommended!
+        private const val RTSP_SERVER_PORT = 8554         // RTSP control port
+        private const val RTP_PORT = 5004                 // RTP data port
+
+        // Only used in non-RTSP mode (not recommended)
+        private const val RTP_SERVER_IP = "192.168.1.100" // MediaMTX server IP
+        private const val RTP_SERVER_PORT = 8000          // MediaMTX RTP port
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -95,10 +107,36 @@ class MainActivity : AppCompatActivity() {
             Toast.LENGTH_SHORT
         ).show()
 
-        // Initialize RTP sender if network streaming is enabled
+        // Initialize network streaming if enabled
         if (ENABLE_NETWORK_STREAMING) {
-            rtpSender = RTPSender(RTP_SERVER_IP, RTP_SERVER_PORT)
-            Log.i(TAG, "Network streaming enabled: $RTP_SERVER_IP:$RTP_SERVER_PORT")
+            if (USE_RTSP_SERVER_MODE) {
+                // RTSP server mode: Android runs RTSP server, MediaMTX connects
+                val deviceIp = getLocalIpAddress()
+                if (deviceIp != null) {
+                    rtpSender = RTPSender(deviceIp, RTP_PORT) // Initial placeholder, will be updated when client connects
+                    rtspServer = RTSPServer(RTSP_SERVER_PORT, RTP_PORT, deviceIp)
+
+                    // Set callback to update RTP destination when MediaMTX connects
+                    rtspServer?.onClientReady = { clientIp, clientPort ->
+                        Log.i(TAG, "MediaMTX connected! Sending RTP to $clientIp:$clientPort")
+                        rtpSender?.updateDestination(clientIp, clientPort)
+                    }
+
+                    Log.i(TAG, "RTSP server mode enabled. MediaMTX should connect to: rtsp://$deviceIp:$RTSP_SERVER_PORT/live")
+                    Toast.makeText(
+                        this,
+                        "RTSP: rtsp://$deviceIp:$RTSP_SERVER_PORT/live",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    Log.e(TAG, "Cannot get device IP address for RTSP server")
+                    Toast.makeText(this, "Error: Cannot get device IP", Toast.LENGTH_LONG).show()
+                }
+            } else {
+                // Raw RTP mode: Android pushes to MediaMTX
+                rtpSender = RTPSender(RTP_SERVER_IP, RTP_SERVER_PORT)
+                Log.i(TAG, "Raw RTP mode enabled: $RTP_SERVER_IP:$RTP_SERVER_PORT")
+            }
         }
 
         // Initialize encoder with detected FPS
@@ -153,6 +191,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun initializeEncoder() {
+        // Start RTSP server if configured
+        rtspServer?.let {
+            try {
+                it.start()
+                Log.i(TAG, "RTSP server started: ${it.getConnectionUrl()}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start RTSP server", e)
+                Toast.makeText(this, "Failed to start RTSP server: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+
         // Start RTP sender if configured
         rtpSender?.let {
             try {
@@ -170,7 +219,9 @@ class MainActivity : AppCompatActivity() {
         Log.i(TAG, "Encoder initialized, surface ready")
 
         // Update UI status
-        val statusMsg = if (rtpSender != null) {
+        val statusMsg = if (USE_RTSP_SERVER_MODE && rtspServer != null) {
+            "Ready (RTSP: ${rtspServer?.getConnectionUrl()})"
+        } else if (rtpSender != null) {
             "Ready to capture (Network: $RTP_SERVER_IP:$RTP_SERVER_PORT)"
         } else {
             "Ready to capture (Local mode)"
@@ -258,11 +309,26 @@ class MainActivity : AppCompatActivity() {
         // Stop RTP sender
         rtpSender?.stop()
 
+        // Stop RTSP server
+        rtspServer?.stop()
+
         isCapturing = false
 
-        // Reinitialize RTP sender if network streaming is enabled
+        // Reinitialize network components if enabled
         if (ENABLE_NETWORK_STREAMING) {
-            rtpSender = RTPSender(RTP_SERVER_IP, RTP_SERVER_PORT)
+            if (USE_RTSP_SERVER_MODE) {
+                val deviceIp = getLocalIpAddress()
+                if (deviceIp != null) {
+                    rtpSender = RTPSender(deviceIp, RTP_PORT)
+                    rtspServer = RTSPServer(RTSP_SERVER_PORT, RTP_PORT, deviceIp)
+                    rtspServer?.onClientReady = { clientIp, clientPort ->
+                        Log.i(TAG, "MediaMTX reconnected! Sending RTP to $clientIp:$clientPort")
+                        rtpSender?.updateDestination(clientIp, clientPort)
+                    }
+                }
+            } else {
+                rtpSender = RTPSender(RTP_SERVER_IP, RTP_SERVER_PORT)
+            }
         }
 
         // Reinitialize encoder for next session
@@ -350,8 +416,36 @@ class MainActivity : AppCompatActivity() {
             stopCapture()
         }
         rtpSender?.stop()
+        rtspServer?.stop()
         cameraController.release()
         handler.removeCallbacksAndMessages(null)
+    }
+
+    /**
+     * Get local IP address of device for RTSP server.
+     */
+    private fun getLocalIpAddress(): String? {
+        try {
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val networkInterface = interfaces.nextElement()
+                val addresses = networkInterface.inetAddresses
+
+                while (addresses.hasMoreElements()) {
+                    val address = addresses.nextElement()
+
+                    // Filter: IPv4, not loopback
+                    if (!address.isLoopbackAddress && address is java.net.Inet4Address) {
+                        val ip = address.hostAddress
+                        Log.d(TAG, "Found IP address: $ip")
+                        return ip
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting local IP", e)
+        }
+        return null
     }
 
 }

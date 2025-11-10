@@ -30,8 +30,8 @@ import java.nio.ByteBuffer
  * @param serverPort RTP port from MediaMTX (e.g., 8000)
  */
 class RTPSender(
-    private val serverIp: String,
-    private val serverPort: Int
+    private var serverIp: String,
+    private var serverPort: Int
 ) {
     private var socket: DatagramSocket? = null
     private var serverAddress: InetAddress? = null
@@ -87,6 +87,20 @@ class RTPSender(
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start RTP sender", e)
             throw e
+        }
+    }
+
+    /**
+     * Update destination IP/port (for RTSP server mode when client connects).
+     */
+    fun updateDestination(ip: String, port: Int) {
+        try {
+            this.serverIp = ip
+            this.serverPort = port
+            this.serverAddress = InetAddress.getByName(ip)
+            Log.i(TAG, "Updated RTP destination: $ip:$port")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to update destination", e)
         }
     }
 
