@@ -5,12 +5,12 @@ plugins {
 
 android {
     namespace = "com.example.android_streamer"
-    compileSdk = 34  // Android 14
+    compileSdk = 36  // Android 14
 
     defaultConfig {
         applicationId = "com.example.android_streamer"
         minSdk = 31  // Android 12 (as you requested)
-        targetSdk = 34  // Android 14
+        targetSdk = 36  // Android 14
         versionCode = 1
         versionName = "1.0"
 
