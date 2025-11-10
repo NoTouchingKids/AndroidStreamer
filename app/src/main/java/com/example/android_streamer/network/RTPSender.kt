@@ -8,18 +8,26 @@ import java.net.InetAddress
 import java.nio.ByteBuffer
 
 /**
- * Simple UDP sender for H.265/HEVC video streams over LOCAL NETWORK.
+ * Simple RTP sender for H.265/HEVC to MediaMTX server (LOCAL NETWORK ONLY).
  *
  * Zero-copy, zero-allocation design:
  * - Pre-allocated packet buffer (reused for all sends)
  * - Direct ByteBuffer operations (no array copying)
- * - Fire-and-forget UDP (no retries, no error handling)
- * - Minimal RTP-like header for frame identification
+ * - Fire-and-forget UDP (no retries, no RTSP handshake)
+ * - Proper RTP headers for MediaMTX compatibility
  *
- * NOT suitable for internet streaming - local network only!
+ * MediaMTX Configuration:
+ * Configure MediaMTX to accept RTP on the specified port:
  *
- * @param serverIp IP address of receiver (e.g., "192.168.1.100")
- * @param serverPort UDP port (e.g., 5004)
+ * paths:
+ *   mystream:
+ *     source: rtp://0.0.0.0:5004
+ *     sourceProtocol: rtp
+ *
+ * Then view with: rtsp://server:8554/mystream
+ *
+ * @param serverIp IP address of MediaMTX server (e.g., "192.168.1.100")
+ * @param serverPort RTP port (e.g., 5004)
  */
 class RTPSender(
     private val serverIp: String,
@@ -29,13 +37,17 @@ class RTPSender(
     private var serverAddress: InetAddress? = null
 
     // Pre-allocated packet buffer (max 64KB for local network)
-    // Most H.265 frames are < 64KB at 8Mbps 30fps
+    // MediaMTX can handle large RTP packets on local network
     private val packetBuffer = ByteArray(65507) // Max UDP payload size
     private val packet = DatagramPacket(packetBuffer, packetBuffer.size)
 
-    // RTP-like state (minimal)
-    private var sequenceNumber: Int = 0
-    private var initialTimestamp: Long = System.currentTimeMillis()
+    // RTP state
+    private var sequenceNumber: Int = 1 // Start at 1
+    private val ssrc: Int = 0x12345678 // Fixed SSRC for this session
+
+    // RTP constants
+    private val RTP_VERSION = 2
+    private val RTP_PAYLOAD_TYPE = 96 // H.265
 
     // Stats
     @Volatile
@@ -47,10 +59,10 @@ class RTPSender(
         private set
 
     /**
-     * Initialize UDP sender.
+     * Initialize RTP sender for MediaMTX.
      */
     fun start() {
-        Log.i(TAG, "Starting UDP sender to $serverIp:$serverPort (local network)")
+        Log.i(TAG, "Starting RTP sender to MediaMTX at $serverIp:$serverPort")
 
         try {
             serverAddress = InetAddress.getByName(serverIp)
@@ -60,27 +72,28 @@ class RTPSender(
             socket?.sendBufferSize = 256 * 1024 // 256KB send buffer
             socket?.trafficClass = 0x10 // IPTOS_LOWDELAY
 
-            Log.i(TAG, "UDP sender started, seq=$sequenceNumber")
+            Log.i(TAG, "RTP sender started: SSRC=0x${ssrc.toString(16)}, seq=$sequenceNumber")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to start UDP sender", e)
+            Log.e(TAG, "Failed to start RTP sender", e)
             throw e
         }
     }
 
     /**
-     * Send H.265 frame over UDP.
+     * Send H.265 frame to MediaMTX over RTP.
      *
      * Zero-copy, zero-allocation hot path:
      * - Reuses pre-allocated packet buffer
      * - Direct ByteBuffer.get() to array
      * - No intermediate allocations
+     * - Proper RTP header for MediaMTX
      *
-     * Packet format (minimal header):
-     * [4 bytes] Sequence number (big-endian)
-     * [8 bytes] Timestamp in microseconds (big-endian)
-     * [4 bytes] Frame size
-     * [1 byte]  Flags (bit 0 = keyframe)
-     * [N bytes] H.265 data
+     * Packet format:
+     * [12 bytes] RTP header (standard RFC 3550)
+     * [N bytes]  H.265 NAL unit data
+     *
+     * For local network, we send entire frame in one packet.
+     * MediaMTX will handle this fine on gigabit LAN.
      *
      * @param buffer MediaCodec output buffer (positioned at frame data)
      * @param timestampUs Presentation timestamp in microseconds
@@ -92,46 +105,44 @@ class RTPSender(
 
         val frameSize = buffer.remaining()
 
-        // Check if frame fits in packet (should be fine for local network)
-        val headerSize = 17 // 4 + 8 + 4 + 1
+        // Check if frame fits (should be fine for local network at 8Mbps)
+        val headerSize = 12 // RTP header
         if (frameSize + headerSize > packetBuffer.size) {
-            Log.w(TAG, "Frame too large: $frameSize bytes (max ${packetBuffer.size - headerSize})")
-            // For local network, we could split, but for now just skip
+            Log.w(TAG, "Frame too large: $frameSize bytes (dropping)")
             return
         }
 
         try {
-            // Build minimal header directly in packet buffer (NO ALLOCATIONS)
+            // Build RTP header (12 bytes, NO ALLOCATIONS)
             var offset = 0
 
-            // Sequence number (4 bytes)
-            packetBuffer[offset++] = (sequenceNumber shr 24).toByte()
-            packetBuffer[offset++] = (sequenceNumber shr 16).toByte()
+            // Byte 0: V(2)=2, P(1)=0, X(1)=0, CC(4)=0
+            packetBuffer[offset++] = (RTP_VERSION shl 6).toByte()
+
+            // Byte 1: M(1)=1, PT(7)=96 (H.265)
+            // Marker bit set on every packet (indicates frame boundary)
+            packetBuffer[offset++] = (0x80 or RTP_PAYLOAD_TYPE).toByte()
+
+            // Bytes 2-3: Sequence number (big-endian, 16-bit)
             packetBuffer[offset++] = (sequenceNumber shr 8).toByte()
             packetBuffer[offset++] = (sequenceNumber and 0xFF).toByte()
 
-            // Timestamp (8 bytes)
-            packetBuffer[offset++] = (timestampUs shr 56).toByte()
-            packetBuffer[offset++] = (timestampUs shr 48).toByte()
-            packetBuffer[offset++] = (timestampUs shr 40).toByte()
-            packetBuffer[offset++] = (timestampUs shr 32).toByte()
-            packetBuffer[offset++] = (timestampUs shr 24).toByte()
-            packetBuffer[offset++] = (timestampUs shr 16).toByte()
-            packetBuffer[offset++] = (timestampUs shr 8).toByte()
-            packetBuffer[offset++] = (timestampUs and 0xFF).toByte()
+            // Bytes 4-7: Timestamp (90kHz clock for video)
+            val rtpTimestamp = (timestampUs * 90 / 1000).toInt()
+            packetBuffer[offset++] = (rtpTimestamp shr 24).toByte()
+            packetBuffer[offset++] = (rtpTimestamp shr 16).toByte()
+            packetBuffer[offset++] = (rtpTimestamp shr 8).toByte()
+            packetBuffer[offset++] = (rtpTimestamp and 0xFF).toByte()
 
-            // Frame size (4 bytes)
-            packetBuffer[offset++] = (frameSize shr 24).toByte()
-            packetBuffer[offset++] = (frameSize shr 16).toByte()
-            packetBuffer[offset++] = (frameSize shr 8).toByte()
-            packetBuffer[offset++] = (frameSize and 0xFF).toByte()
+            // Bytes 8-11: SSRC (big-endian)
+            packetBuffer[offset++] = (ssrc shr 24).toByte()
+            packetBuffer[offset++] = (ssrc shr 16).toByte()
+            packetBuffer[offset++] = (ssrc shr 8).toByte()
+            packetBuffer[offset++] = (ssrc and 0xFF).toByte()
 
-            // Flags (1 byte)
-            packetBuffer[offset++] = if (isKeyFrame) 0x01 else 0x00
-
-            // Copy H.265 data directly from ByteBuffer (minimal copy, unavoidable)
+            // Copy H.265 data directly from ByteBuffer
             buffer.get(packetBuffer, offset, frameSize)
-            buffer.rewind() // Reset for potential retry
+            buffer.rewind()
 
             // Send packet (fire and forget!)
             packet.address = addr
@@ -142,23 +153,23 @@ class RTPSender(
             // Update stats and sequence
             packetsSent++
             bytesSent += packet.length
-            sequenceNumber++
+            sequenceNumber = (sequenceNumber + 1) and 0xFFFF // Wrap at 65535
 
             if (isKeyFrame) {
-                Log.d(TAG, "Sent keyframe: $frameSize bytes, seq=$sequenceNumber, ts=$timestampUs")
+                Log.d(TAG, "Sent keyframe: $frameSize bytes, seq=$sequenceNumber, ts=$rtpTimestamp")
             }
 
         } catch (e: IOException) {
             // Fire and forget - just log and continue
-            Log.w(TAG, "Failed to send frame (seq=$sequenceNumber): ${e.message}")
+            Log.w(TAG, "Send failed (seq=$sequenceNumber): ${e.message}")
         }
     }
 
     /**
-     * Stop UDP sender.
+     * Stop RTP sender.
      */
     fun stop() {
-        Log.i(TAG, "Stopping UDP sender. Stats: packets=$packetsSent, bytes=${bytesSent / 1024}KB")
+        Log.i(TAG, "Stopping RTP sender. Stats: packets=$packetsSent, bytes=${bytesSent / 1024}KB")
         socket?.close()
         socket = null
         serverAddress = null
