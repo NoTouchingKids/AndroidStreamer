@@ -55,12 +55,16 @@ class MainActivity : AppCompatActivity() {
          *
          * ENABLE_NETWORK_STREAMING: Set to true to send encoded video over RTP to MediaMTX
          * RTP_SERVER_IP: IP address of MediaMTX server (LOCAL NETWORK ONLY!)
-         * RTP_SERVER_PORT: UDP port for RTP stream (must match MediaMTX config, default 5004)
+         * RTP_SERVER_PORT: UDP port for RTP stream (default 8000, check MediaMTX logs)
+         *
+         * MediaMTX shows the RTP port in its logs:
+         *   "INF [RTSP] listener opened on :8554 (TCP), :8000 (UDP/RTP), :8001 (UDP/RTCP)"
+         *                                              ^^^^^ Use this port
          *
          * MediaMTX Configuration (mediamtx.yml):
          *   paths:
          *     android:
-         *       source: rtp://0.0.0.0:5004
+         *       source: rtp://0.0.0.0:8000
          *       sourceProtocol: rtp
          *
          * View stream: rtsp://server:8554/android
@@ -69,7 +73,7 @@ class MainActivity : AppCompatActivity() {
          */
         private const val ENABLE_NETWORK_STREAMING = true
         private const val RTP_SERVER_IP = "192.168.1.100" // Change to your MediaMTX server IP
-        private const val RTP_SERVER_PORT = 5004          // Must match MediaMTX config
+        private const val RTP_SERVER_PORT = 8000          // MediaMTX default RTP port
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

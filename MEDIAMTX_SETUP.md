@@ -22,12 +22,19 @@ Edit `mediamtx.yml`:
 paths:
   android:
     # Accept RTP stream from Android device
-    source: rtp://0.0.0.0:5004
+    # Use port 8000 (MediaMTX default RTP port shown in logs)
+    source: rtp://0.0.0.0:8000
     sourceProtocol: rtp
 
     # Optional: Enable recording
     # record: yes
     # recordPath: ./recordings/%path/%Y-%m-%d_%H-%M-%S
+```
+
+**Note:** MediaMTX shows its RTP port in the logs:
+```
+INF [RTSP] listener opened on :8554 (TCP), :8000 (UDP/RTP), :8001 (UDP/RTCP)
+                                             ^^^^^ Use this port
 ```
 
 ### 3. Start MediaMTX
@@ -47,7 +54,7 @@ In `MainActivity.kt`, update the server IP:
 
 ```kotlin
 private const val RTP_SERVER_IP = "192.168.1.100"  // Your MediaMTX server IP
-private const val RTP_SERVER_PORT = 5004            // Must match mediamtx.yml
+private const val RTP_SERVER_PORT = 8000            // MediaMTX default RTP port
 ```
 
 ### 5. Start Streaming
@@ -190,16 +197,24 @@ Typical performance on local gigabit network:
 RTP packets sent by AndroidStreamer:
 
 ```
+Small Frames (< 1400 bytes):
 [12 bytes] RTP Header
   - Version: 2
   - Payload Type: 96 (H.265)
   - Sequence Number: Incremental
   - Timestamp: 90kHz clock
   - SSRC: 0x12345678
+  - Marker bit: 1
+[N bytes] Complete H.265 NAL unit
 
-[N bytes] H.265 NAL Unit Data
-  - Complete frame (no fragmentation on local network)
-  - ~20-40KB per frame at 8Mbps 30fps
+Large Frames (> 1400 bytes):
+Fragmented into multiple packets using H.265 FU (Fragmentation Units):
+[12 bytes] RTP Header
+[3 bytes]  FU Header (type=49, S/E bits for start/end)
+[~1385 bytes] Fragment payload
+
+- Regular frames: ~30-50KB (sent as single packet or 2-3 fragments)
+- Keyframes: ~80-180KB (fragmented into 60-130 packets)
 ```
 
-MediaMTX receives these RTP packets and re-packages them for RTSP/WebRTC/HLS distribution.
+MediaMTX receives and reassembles these RTP packets, then re-streams via RTSP/WebRTC/HLS.
