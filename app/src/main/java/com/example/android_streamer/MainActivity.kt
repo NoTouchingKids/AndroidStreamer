@@ -120,12 +120,22 @@ class MainActivity : AppCompatActivity() {
                     rtspServer?.onClientReady = { clientIp, clientPort ->
                         Log.i(TAG, "MediaMTX connected! Sending RTP to $clientIp:$clientPort")
                         rtpSender?.updateDestination(clientIp, clientPort)
+
+                        // Show connection status
+                        runOnUiThread {
+                            Toast.makeText(
+                                this,
+                                "MediaMTX connected from $clientIp\nStreaming to port $clientPort",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            updateStatus("Streaming to MediaMTX ($clientIp)")
+                        }
                     }
 
                     Log.i(TAG, "RTSP server mode enabled. MediaMTX should connect to: rtsp://$deviceIp:$RTSP_SERVER_PORT/live")
                     Toast.makeText(
                         this,
-                        "RTSP: rtsp://$deviceIp:$RTSP_SERVER_PORT/live",
+                        "Android IP: $deviceIp\nMediaMTX should connect to:\nrtsp://$deviceIp:$RTSP_SERVER_PORT/live",
                         Toast.LENGTH_LONG
                     ).show()
                 } else {
@@ -220,7 +230,8 @@ class MainActivity : AppCompatActivity() {
 
         // Update UI status
         val statusMsg = if (USE_RTSP_SERVER_MODE && rtspServer != null) {
-            "Ready (RTSP: ${rtspServer?.getConnectionUrl()})"
+            val androidIp = rtspServer?.getConnectionUrl()?.substringAfter("rtsp://")?.substringBefore(":")
+            "Ready - Waiting for MediaMTX (Android: $androidIp)"
         } else if (rtpSender != null) {
             "Ready to capture (Network: $RTP_SERVER_IP:$RTP_SERVER_PORT)"
         } else {
@@ -324,6 +335,16 @@ class MainActivity : AppCompatActivity() {
                     rtspServer?.onClientReady = { clientIp, clientPort ->
                         Log.i(TAG, "MediaMTX reconnected! Sending RTP to $clientIp:$clientPort")
                         rtpSender?.updateDestination(clientIp, clientPort)
+
+                        // Show connection status
+                        runOnUiThread {
+                            Toast.makeText(
+                                this,
+                                "MediaMTX reconnected from $clientIp",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            updateStatus("Streaming to MediaMTX ($clientIp)")
+                        }
                     }
                 }
             } else {
