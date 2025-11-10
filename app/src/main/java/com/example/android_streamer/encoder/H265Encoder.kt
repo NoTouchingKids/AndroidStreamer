@@ -219,9 +219,16 @@ class H265Encoder(
 
         override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
             Log.i(TAG, "Output format changed: $format")
-            Log.i(TAG, "  Width: ${format.getInteger(MediaFormat.KEY_WIDTH)}")
-            Log.i(TAG, "  Height: ${format.getInteger(MediaFormat.KEY_HEIGHT)}")
-            Log.i(TAG, "  Color format: ${format.getInteger(MediaFormat.KEY_COLOR_FORMAT)}")
+            // Note: Output format doesn't contain all input keys (e.g., color-format is input-only)
+            if (format.containsKey(MediaFormat.KEY_WIDTH)) {
+                Log.i(TAG, "  Width: ${format.getInteger(MediaFormat.KEY_WIDTH)}")
+            }
+            if (format.containsKey(MediaFormat.KEY_HEIGHT)) {
+                Log.i(TAG, "  Height: ${format.getInteger(MediaFormat.KEY_HEIGHT)}")
+            }
+            if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) {
+                Log.i(TAG, "  Frame rate: ${format.getInteger(MediaFormat.KEY_FRAME_RATE)}")
+            }
         }
     }
 
