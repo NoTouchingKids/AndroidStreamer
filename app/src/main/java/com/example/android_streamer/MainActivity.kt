@@ -86,6 +86,10 @@ class MainActivity : AppCompatActivity() {
         // Only used in non-RTSP mode (not recommended)
         private const val RTP_SERVER_IP = "192.168.1.100" // MediaMTX server IP
         private const val RTP_SERVER_PORT = 8000          // MediaMTX RTP port
+
+        // Manual IP override (if auto-detection fails)
+        // Set to null to use auto-detection, or set to your Android device IP
+        private const val MANUAL_ANDROID_IP: String? = null // e.g., "192.168.0.20"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -111,8 +115,11 @@ class MainActivity : AppCompatActivity() {
         if (ENABLE_NETWORK_STREAMING) {
             if (USE_RTSP_SERVER_MODE) {
                 // RTSP server mode: Android runs RTSP server, MediaMTX connects
-                val deviceIp = getLocalIpAddress()
+                val deviceIp = MANUAL_ANDROID_IP ?: getLocalIpAddress()
                 if (deviceIp != null) {
+                    if (MANUAL_ANDROID_IP != null) {
+                        Log.i(TAG, "Using manual Android IP: $MANUAL_ANDROID_IP")
+                    }
                     rtpSender = RTPSender(deviceIp, RTP_PORT) // Initial placeholder, will be updated when client connects
                     rtspServer = RTSPServer(RTSP_SERVER_PORT, RTP_PORT, deviceIp)
 
@@ -231,7 +238,11 @@ class MainActivity : AppCompatActivity() {
         // Update UI status
         val statusMsg = if (USE_RTSP_SERVER_MODE && rtspServer != null) {
             val androidIp = rtspServer?.getConnectionUrl()?.substringAfter("rtsp://")?.substringBefore(":")
-            "Ready - Waiting for MediaMTX (Android: $androidIp)"
+            if (androidIp.isNullOrEmpty()) {
+                "Ready - Waiting for MediaMTX (IP detection failed!)"
+            } else {
+                "Ready - Waiting for MediaMTX at $androidIp:$RTSP_SERVER_PORT"
+            }
         } else if (rtpSender != null) {
             "Ready to capture (Network: $RTP_SERVER_IP:$RTP_SERVER_PORT)"
         } else {
@@ -328,7 +339,7 @@ class MainActivity : AppCompatActivity() {
         // Reinitialize network components if enabled
         if (ENABLE_NETWORK_STREAMING) {
             if (USE_RTSP_SERVER_MODE) {
-                val deviceIp = getLocalIpAddress()
+                val deviceIp = MANUAL_ANDROID_IP ?: getLocalIpAddress()
                 if (deviceIp != null) {
                     rtpSender = RTPSender(deviceIp, RTP_PORT)
                     rtspServer = RTSPServer(RTSP_SERVER_PORT, RTP_PORT, deviceIp)
@@ -447,22 +458,32 @@ class MainActivity : AppCompatActivity() {
      */
     private fun getLocalIpAddress(): String? {
         try {
+            Log.d(TAG, "Attempting to get local IP address...")
             val interfaces = NetworkInterface.getNetworkInterfaces()
+
+            if (interfaces == null) {
+                Log.w(TAG, "NetworkInterface.getNetworkInterfaces() returned null")
+                return null
+            }
+
             while (interfaces.hasMoreElements()) {
                 val networkInterface = interfaces.nextElement()
+                Log.d(TAG, "Checking interface: ${networkInterface.name}")
                 val addresses = networkInterface.inetAddresses
 
                 while (addresses.hasMoreElements()) {
                     val address = addresses.nextElement()
+                    Log.d(TAG, "  Address: ${address.hostAddress}, isLoopback=${address.isLoopbackAddress}, isIPv4=${address is java.net.Inet4Address}")
 
                     // Filter: IPv4, not loopback
                     if (!address.isLoopbackAddress && address is java.net.Inet4Address) {
                         val ip = address.hostAddress
-                        Log.d(TAG, "Found IP address: $ip")
+                        Log.i(TAG, "✓ Found valid IP address: $ip")
                         return ip
                     }
                 }
             }
+            Log.w(TAG, "No valid IPv4 address found. Is WiFi connected?")
         } catch (e: Exception) {
             Log.e(TAG, "Error getting local IP", e)
         }
