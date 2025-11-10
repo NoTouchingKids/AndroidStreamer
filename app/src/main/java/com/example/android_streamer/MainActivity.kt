@@ -209,10 +209,10 @@ class MainActivity : AppCompatActivity() {
 
         // Reinitialize encoder for next session
         encoder = H265Encoder(
-            width = 1920,
-            height = 1080,
+            width = targetWidth,
+            height = targetHeight,
             bitrate = 8_000_000,
-            frameRate = 60
+            frameRate = targetFps  // Use detected FPS, not hardcoded 60
         )
         initializeEncoder()
 
