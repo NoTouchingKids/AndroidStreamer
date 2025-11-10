@@ -5,6 +5,7 @@ import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.util.Log
 import android.view.Surface
+import com.example.android_streamer.network.RTPSender
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -22,12 +23,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  * @param height Video height (e.g., 1080)
  * @param bitrate Target bitrate in bps (e.g., 8_000_000 for 8 Mbps)
  * @param frameRate Target frame rate (e.g., 60)
+ * @param rtpSender Optional RTP sender for network streaming (null = local mode)
  */
 class H265Encoder(
     private val width: Int,
     private val height: Int,
     private val bitrate: Int,
-    private val frameRate: Int
+    private val frameRate: Int,
+    private val rtpSender: RTPSender? = null
 ) {
     private var mediaCodec: MediaCodec? = null
     private var inputSurface: Surface? = null
@@ -268,14 +271,19 @@ class H265Encoder(
                     buffer.position(offset)
                     buffer.limit(offset + size)
 
-                    // TODO: Send buffer to network (TCP/UDP/RTP)
-                    // For now, just log keyframes
-                    if (isKeyFrame) {
-                        Log.d(TAG, "Encoded keyframe: ${size} bytes, pts=${ptsUs}μs")
+                    // Send buffer to network if RTP sender is configured
+                    if (rtpSender != null) {
+                        try {
+                            rtpSender.sendFrame(buffer, ptsUs, isKeyFrame)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to send frame over RTP", e)
+                        }
+                    } else {
+                        // Local mode - just log keyframes
+                        if (isKeyFrame) {
+                            Log.d(TAG, "Encoded keyframe: ${size} bytes, pts=${ptsUs}μs (no network sender)")
+                        }
                     }
-
-                    // Simulate send (remove this when implementing real network send)
-                    // In production: socket.write(buffer) or RTP packetizer
 
                 } finally {
                     // ALWAYS release buffer back to MediaCodec

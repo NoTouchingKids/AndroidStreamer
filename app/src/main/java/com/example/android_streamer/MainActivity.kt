@@ -14,11 +14,13 @@ import androidx.core.content.ContextCompat
 import com.example.android_streamer.camera.Camera2Controller
 import com.example.android_streamer.databinding.ActivityMainBinding
 import com.example.android_streamer.encoder.H265Encoder
+import com.example.android_streamer.network.RTPSender
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var cameraController: Camera2Controller
     private lateinit var encoder: H265Encoder
+    private var rtpSender: RTPSender? = null
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -47,6 +49,17 @@ class MainActivity : AppCompatActivity() {
          * TRUE: Dual-surface mode - preview visible during capture (debug only)
          */
         private const val ENABLE_PREVIEW_DURING_CAPTURE = false
+
+        /**
+         * Network streaming configuration.
+         *
+         * ENABLE_NETWORK_STREAMING: Set to true to send encoded video over RTP
+         * RTP_SERVER_IP: IP address of MediaMTX or other RTP receiver
+         * RTP_SERVER_PORT: UDP port for RTP stream (default 5004)
+         */
+        private const val ENABLE_NETWORK_STREAMING = true
+        private const val RTP_SERVER_IP = "192.168.1.100" // Change to your MediaMTX server IP
+        private const val RTP_SERVER_PORT = 5004
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -68,12 +81,19 @@ class MainActivity : AppCompatActivity() {
             Toast.LENGTH_SHORT
         ).show()
 
+        // Initialize RTP sender if network streaming is enabled
+        if (ENABLE_NETWORK_STREAMING) {
+            rtpSender = RTPSender(RTP_SERVER_IP, RTP_SERVER_PORT)
+            Log.i(TAG, "Network streaming enabled: $RTP_SERVER_IP:$RTP_SERVER_PORT")
+        }
+
         // Initialize encoder with detected FPS
         encoder = H265Encoder(
             width = targetWidth,
             height = targetHeight,
             bitrate = 8_000_000, // 8 Mbps
-            frameRate = targetFps
+            frameRate = targetFps,
+            rtpSender = rtpSender
         )
 
         // Setup preview surface callback
@@ -119,13 +139,29 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun initializeEncoder() {
+        // Start RTP sender if configured
+        rtpSender?.let {
+            try {
+                it.start()
+                Log.i(TAG, "RTP sender started")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start RTP sender", e)
+                Toast.makeText(this, "Failed to start network sender: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+
         // Create encoder and get input surface
         encoderSurface = encoder.start()
         encoderSurfaceReady = true
         Log.i(TAG, "Encoder initialized, surface ready")
 
         // Update UI status
-        updateStatus("Ready to capture")
+        val statusMsg = if (rtpSender != null) {
+            "Ready to capture (Network: $RTP_SERVER_IP:$RTP_SERVER_PORT)"
+        } else {
+            "Ready to capture (Local mode)"
+        }
+        updateStatus(statusMsg)
     }
 
     private fun startCapture() {
@@ -205,14 +241,23 @@ class MainActivity : AppCompatActivity() {
         // Stop encoder
         encoder.stop()
 
+        // Stop RTP sender
+        rtpSender?.stop()
+
         isCapturing = false
+
+        // Reinitialize RTP sender if network streaming is enabled
+        if (ENABLE_NETWORK_STREAMING) {
+            rtpSender = RTPSender(RTP_SERVER_IP, RTP_SERVER_PORT)
+        }
 
         // Reinitialize encoder for next session
         encoder = H265Encoder(
             width = targetWidth,
             height = targetHeight,
             bitrate = 8_000_000,
-            frameRate = targetFps  // Use detected FPS, not hardcoded 60
+            frameRate = targetFps,  // Use detected FPS, not hardcoded 60
+            rtpSender = rtpSender
         )
         initializeEncoder()
 
@@ -290,6 +335,7 @@ class MainActivity : AppCompatActivity() {
         if (isCapturing) {
             stopCapture()
         }
+        rtpSender?.stop()
         cameraController.release()
         handler.removeCallbacksAndMessages(null)
     }
