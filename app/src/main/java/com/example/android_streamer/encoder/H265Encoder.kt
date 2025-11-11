@@ -60,6 +60,9 @@ class H265Encoder(
     private var ppsData: ByteArray? = null
     private var vpsData: ByteArray? = null
 
+    // Callback when codec data (SPS/PPS/VPS) is available
+    var onCodecDataReady: ((vps: ByteArray?, sps: ByteArray, pps: ByteArray) -> Unit)? = null
+
     /**
      * Start the encoder and consumer thread.
      *
@@ -98,23 +101,7 @@ class H265Encoder(
             Log.d(TAG, "Starting MediaCodec...")
             start()
             Log.i(TAG, "MediaCodec started successfully")
-
-            // Extract codec-specific data (SPS/PPS/VPS) for RTSP
-            try {
-                val outputFormat = outputFormat
-                vpsData = outputFormat.getByteBuffer("csd-0")?.let { buffer ->
-                    ByteArray(buffer.remaining()).also { buffer.get(it) }
-                }
-                spsData = outputFormat.getByteBuffer("csd-1")?.let { buffer ->
-                    ByteArray(buffer.remaining()).also { buffer.get(it) }
-                }
-                ppsData = outputFormat.getByteBuffer("csd-2")?.let { buffer ->
-                    ByteArray(buffer.remaining()).also { buffer.get(it) }
-                }
-                Log.i(TAG, "Extracted codec data: VPS=${vpsData?.size ?: 0}B, SPS=${spsData?.size ?: 0}B, PPS=${ppsData?.size ?: 0}B")
-            } catch (e: Exception) {
-                Log.w(TAG, "Could not extract codec-specific data from output format", e)
-            }
+            Log.i(TAG, "Codec data will be extracted when onOutputFormatChanged is called")
         }
 
         // Start consumer thread
@@ -266,6 +253,36 @@ class H265Encoder(
             }
             if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) {
                 Log.i(TAG, "  Frame rate: ${format.getInteger(MediaFormat.KEY_FRAME_RATE)}")
+            }
+
+            // Extract codec-specific data (SPS/PPS/VPS) for RTSP
+            // This is the right place to do it - format is now populated with csd buffers
+            try {
+                vpsData = format.getByteBuffer("csd-0")?.let { buffer ->
+                    ByteArray(buffer.remaining()).also { buffer.get(it) }
+                }
+                spsData = format.getByteBuffer("csd-1")?.let { buffer ->
+                    ByteArray(buffer.remaining()).also { buffer.get(it) }
+                }
+                ppsData = format.getByteBuffer("csd-2")?.let { buffer ->
+                    ByteArray(buffer.remaining()).also { buffer.get(it) }
+                }
+
+                val vpsSize = vpsData?.size ?: 0
+                val spsSize = spsData?.size ?: 0
+                val ppsSize = ppsData?.size ?: 0
+
+                Log.i(TAG, "Extracted codec data: VPS=${vpsSize}B, SPS=${spsSize}B, PPS=${ppsSize}B")
+
+                // Notify callback if we have at least SPS and PPS
+                if (spsData != null && ppsData != null) {
+                    Log.i(TAG, "Codec data ready! Triggering callback...")
+                    onCodecDataReady?.invoke(vpsData, spsData!!, ppsData!!)
+                } else {
+                    Log.w(TAG, "Codec data incomplete (missing SPS or PPS)")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to extract codec-specific data from output format", e)
             }
         }
     }

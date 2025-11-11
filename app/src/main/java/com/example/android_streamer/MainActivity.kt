@@ -184,6 +184,35 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun initializeEncoder() {
+        // Set callback to receive codec data when it's ready
+        encoder.onCodecDataReady = { vps, sps, pps ->
+            Log.i(TAG, "Codec data received: VPS=${vps?.size ?: 0}B, SPS=${sps.size}B, PPS=${pps.size}B")
+
+            // Now we can set stream parameters and connect RTSP client
+            rtspClient?.let { client ->
+                Log.i(TAG, "Setting codec data in RTSP client: SPS=${sps.size}B, PPS=${pps.size}B")
+                client.setStreamParameters(targetWidth, targetHeight, targetFps, sps, pps)
+
+                // Connect RTSP client to MediaMTX
+                try {
+                    client.connect()
+                    Log.i(TAG, "RTSP client connecting to ${client.getServerUrl()}")
+                    runOnUiThread {
+                        Toast.makeText(
+                            this,
+                            "Connecting to MediaMTX...",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to connect RTSP client", e)
+                    runOnUiThread {
+                        Toast.makeText(this, "Failed to connect to MediaMTX: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                }
+            }
+        }
+
         // Create encoder and get input surface
         encoderSurface = encoder.start()
         encoderSurfaceReady = true
@@ -200,30 +229,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Get codec data (SPS/PPS) from encoder and set it in RTSP client
-        rtspClient?.let { client ->
-            val codecData = encoder.getCodecData()
-            if (codecData != null) {
-                Log.i(TAG, "Setting codec data in RTSP client: SPS=${codecData.sps.size}B, PPS=${codecData.pps.size}B")
-                client.setStreamParameters(targetWidth, targetHeight, targetFps, codecData.sps, codecData.pps)
-
-                // Now connect RTSP client to MediaMTX
-                try {
-                    client.connect()
-                    Log.i(TAG, "RTSP client connecting to ${client.getServerUrl()}")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to connect RTSP client", e)
-                    Toast.makeText(this, "Failed to connect to MediaMTX: ${e.message}", Toast.LENGTH_LONG).show()
-                }
-            } else {
-                Log.w(TAG, "Codec data not available from encoder, RTSP connection may fail")
-                Toast.makeText(this, "Warning: Codec data not available", Toast.LENGTH_SHORT).show()
-            }
-        }
-
         // Update UI status
         val statusMsg = if (rtspClient != null) {
-            "Ready - Connecting to MediaMTX ($MEDIAMTX_SERVER_IP)"
+            "Ready - Waiting for codec data..."
         } else {
             "Ready to capture (Local mode)"
         }
