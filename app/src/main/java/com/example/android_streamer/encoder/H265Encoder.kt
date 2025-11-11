@@ -256,33 +256,127 @@ class H265Encoder(
             }
 
             // Extract codec-specific data (SPS/PPS/VPS) for RTSP
-            // This is the right place to do it - format is now populated with csd buffers
+            // For H.265, all parameter sets are typically in csd-0 concatenated together
             try {
-                vpsData = format.getByteBuffer("csd-0")?.let { buffer ->
-                    ByteArray(buffer.remaining()).also { buffer.get(it) }
-                }
-                spsData = format.getByteBuffer("csd-1")?.let { buffer ->
-                    ByteArray(buffer.remaining()).also { buffer.get(it) }
-                }
-                ppsData = format.getByteBuffer("csd-2")?.let { buffer ->
-                    ByteArray(buffer.remaining()).also { buffer.get(it) }
-                }
+                val csd0 = format.getByteBuffer("csd-0")
+                if (csd0 != null) {
+                    val csd0Data = ByteArray(csd0.remaining()).also { csd0.get(it) }
+                    Log.i(TAG, "csd-0 size: ${csd0Data.size} bytes")
 
-                val vpsSize = vpsData?.size ?: 0
-                val spsSize = spsData?.size ?: 0
-                val ppsSize = ppsData?.size ?: 0
+                    // Parse csd-0 to extract VPS, SPS, and PPS
+                    parseH265ParameterSets(csd0Data)
 
-                Log.i(TAG, "Extracted codec data: VPS=${vpsSize}B, SPS=${spsSize}B, PPS=${ppsSize}B")
+                    val vpsSize = vpsData?.size ?: 0
+                    val spsSize = spsData?.size ?: 0
+                    val ppsSize = ppsData?.size ?: 0
 
-                // Notify callback if we have at least SPS and PPS
-                if (spsData != null && ppsData != null) {
-                    Log.i(TAG, "Codec data ready! Triggering callback...")
-                    onCodecDataReady?.invoke(vpsData, spsData!!, ppsData!!)
+                    Log.i(TAG, "Parsed codec data: VPS=${vpsSize}B, SPS=${spsSize}B, PPS=${ppsSize}B")
+
+                    // Notify callback if we have at least SPS and PPS
+                    if (spsData != null && ppsData != null) {
+                        Log.i(TAG, "Codec data ready! Triggering callback...")
+                        onCodecDataReady?.invoke(vpsData, spsData!!, ppsData!!)
+                    } else {
+                        Log.w(TAG, "Codec data incomplete (missing SPS or PPS)")
+                    }
                 } else {
-                    Log.w(TAG, "Codec data incomplete (missing SPS or PPS)")
+                    Log.w(TAG, "csd-0 not found in output format")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to extract codec-specific data from output format", e)
+            }
+        }
+
+        /**
+         * Parse H.265 parameter sets from csd-0 buffer.
+         * The buffer contains NAL units with either start codes (0x00000001) or length prefixes.
+         */
+        private fun parseH265ParameterSets(data: ByteArray) {
+            var offset = 0
+
+            while (offset < data.size) {
+                var nalStart = offset
+                var nalSize = 0
+
+                // Check for start code (0x00000001 or 0x000001)
+                if (offset + 3 < data.size &&
+                    data[offset] == 0.toByte() &&
+                    data[offset + 1] == 0.toByte() &&
+                    data[offset + 2] == 0.toByte() &&
+                    data[offset + 3] == 1.toByte()) {
+                    // 4-byte start code
+                    nalStart = offset + 4
+                    // Find next start code or end of buffer
+                    var nextStart = nalStart + 1
+                    while (nextStart + 3 < data.size) {
+                        if (data[nextStart] == 0.toByte() &&
+                            data[nextStart + 1] == 0.toByte() &&
+                            (data[nextStart + 2] == 0.toByte() || data[nextStart + 2] == 1.toByte())) {
+                            break
+                        }
+                        nextStart++
+                    }
+                    nalSize = if (nextStart + 3 < data.size) nextStart - nalStart else data.size - nalStart
+                    offset = nextStart
+                } else if (offset + 2 < data.size &&
+                           data[offset] == 0.toByte() &&
+                           data[offset + 1] == 0.toByte() &&
+                           data[offset + 2] == 1.toByte()) {
+                    // 3-byte start code
+                    nalStart = offset + 3
+                    var nextStart = nalStart + 1
+                    while (nextStart + 2 < data.size) {
+                        if (data[nextStart] == 0.toByte() &&
+                            data[nextStart + 1] == 0.toByte() &&
+                            data[nextStart + 2] == 1.toByte()) {
+                            break
+                        }
+                        nextStart++
+                    }
+                    nalSize = if (nextStart + 2 < data.size) nextStart - nalStart else data.size - nalStart
+                    offset = nextStart
+                } else if (offset + 4 <= data.size) {
+                    // Length-prefixed (4 bytes big-endian length, then NAL data)
+                    nalSize = ((data[offset].toInt() and 0xFF) shl 24) or
+                              ((data[offset + 1].toInt() and 0xFF) shl 16) or
+                              ((data[offset + 2].toInt() and 0xFF) shl 8) or
+                              (data[offset + 3].toInt() and 0xFF)
+                    nalStart = offset + 4
+
+                    if (nalStart + nalSize > data.size) {
+                        Log.w(TAG, "Invalid NAL size: $nalSize at offset $offset")
+                        break
+                    }
+                    offset = nalStart + nalSize
+                } else {
+                    break
+                }
+
+                // Extract NAL unit
+                if (nalSize > 0 && nalStart + nalSize <= data.size) {
+                    val nalUnit = data.copyOfRange(nalStart, nalStart + nalSize)
+
+                    // Get NAL unit type from first byte (bits 1-6, shifted right by 1)
+                    val nalType = (nalUnit[0].toInt() shr 1) and 0x3F
+
+                    when (nalType) {
+                        32 -> {
+                            vpsData = nalUnit
+                            Log.d(TAG, "Found VPS: ${nalUnit.size} bytes")
+                        }
+                        33 -> {
+                            spsData = nalUnit
+                            Log.d(TAG, "Found SPS: ${nalUnit.size} bytes")
+                        }
+                        34 -> {
+                            ppsData = nalUnit
+                            Log.d(TAG, "Found PPS: ${nalUnit.size} bytes")
+                        }
+                        else -> {
+                            Log.d(TAG, "Found NAL type $nalType: ${nalUnit.size} bytes")
+                        }
+                    }
+                }
             }
         }
     }
