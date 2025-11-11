@@ -470,29 +470,42 @@ class Camera2Controller(private val context: Context) {
             }
         }
 
-        // Strategy 1: Try to find fixed FPS range (where lower == upper)
+        // Strategy: Find maximum achievable FPS from available ranges
+        // Fixed ranges ([60,60]) are ideal, but variable ranges ([30,60]) also support the upper value
+
         val fixedFpsRanges = fpsRanges.filter { it.lower == it.upper }
         val maxFixedFps = fixedFpsRanges.maxByOrNull { it.upper }?.upper
-
-        // Strategy 2: Check if there's a variable range that includes our target FPS
-        // For example, [30,60] means we can request 60fps
         val maxVariableFps = fpsRanges.maxByOrNull { it.upper }?.upper ?: 30
 
         Log.i(TAG, "Fixed FPS ranges: ${fixedFpsRanges.map { "[${it.lower},${it.upper}]" }}")
         Log.i(TAG, "Max fixed FPS: $maxFixedFps")
         Log.i(TAG, "Max variable FPS: $maxVariableFps")
 
-        // Prefer fixed FPS if available, otherwise use max from variable range
-        val selectedFps = maxFixedFps ?: maxVariableFps
+        // Priority selection for best FPS:
+        // 1. If 120fps available (fixed or variable) → use 120
+        // 2. If 60fps available (fixed or variable) → use 60
+        // 3. Otherwise use max available FPS
 
-        // If we have a variable range that goes up to 60, we can use 60
-        val has60FpsRange = fpsRanges.any { it.upper >= 60 }
-        if (has60FpsRange && selectedFps < 60) {
-            Log.i(TAG, "Found FPS range supporting 60fps, using 60fps instead of $selectedFps")
-            return 60
+        val selectedFps = when {
+            // Check for 120fps support (fixed or variable range)
+            fpsRanges.any { it.upper >= 120 } -> {
+                Log.i(TAG, "✓ 120fps supported! Using 120fps")
+                120
+            }
+            // Check for 60fps support (fixed or variable range)
+            fpsRanges.any { it.upper >= 60 } -> {
+                Log.i(TAG, "✓ 60fps supported! Using 60fps")
+                60
+            }
+            // Fall back to maximum available
+            else -> {
+                val fps = maxFixedFps ?: maxVariableFps
+                Log.i(TAG, "Using max available FPS: $fps")
+                fps
+            }
         }
 
-        Log.i(TAG, "Selected FPS: $selectedFps")
+        Log.i(TAG, "Final selected FPS: $selectedFps")
         return selectedFps
     }
 

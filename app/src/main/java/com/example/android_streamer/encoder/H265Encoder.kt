@@ -81,7 +81,9 @@ class H265Encoder(
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
             setInteger(MediaFormat.KEY_FRAME_RATE, frameRate)
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1) // I-frame every 1 second
+            // I-frame interval: 0.5s for low latency (max 500ms decode startup, faster recovery from packet loss)
+            // Tradeoff: ~10-15% bitrate increase vs 50% latency reduction
+            setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, 0.5f) // I-frame every 500ms
             setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain)
             // Level 5.1 supports 1080p@120fps and provides headroom for future 4K@60fps
             setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel51)
@@ -93,13 +95,13 @@ class H265Encoder(
             // Bitrate mode: CBR for predictable latency (50 Mbps for 1080p@60fps high quality)
             setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
 
-            // Quality tuning for complex frames (try to set complexity if supported)
+            // Quality tuning: Use balanced complexity for good quality + performance
             try {
                 // KEY_COMPLEXITY: 0 (fast), 1 (balanced), 2 (quality)
-                // Higher complexity = better quality at same bitrate (more CPU intensive)
-                // On Samsung Exynos, this may not be supported, so wrap in try-catch
-                setInteger(MediaFormat.KEY_COMPLEXITY, 2) // Maximum quality
-                Log.i(TAG, "Encoder complexity set to maximum (2) for better quality")
+                // Using 1 (balanced) for good quality without excessive CPU load
+                // Keeps frame rate high while maintaining image quality
+                setInteger(MediaFormat.KEY_COMPLEXITY, 1) // Balanced quality/performance
+                Log.i(TAG, "Encoder complexity set to balanced (1) for quality + performance")
             } catch (e: Exception) {
                 Log.d(TAG, "KEY_COMPLEXITY not supported on this device (expected for Exynos)")
             }
