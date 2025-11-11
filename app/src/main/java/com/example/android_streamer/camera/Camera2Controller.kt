@@ -307,39 +307,97 @@ class Camera2Controller(private val context: Context) {
     }
 
     /**
-     * Find back camera ID.
+     * Find best back camera ID for high-resolution/high-FPS streaming.
+     *
+     * On multi-camera devices (e.g., Samsung Note 10+), there may be multiple back cameras:
+     * - Wide (main): Usually camera "0", supports highest resolution/FPS
+     * - Ultra-wide: May not support 4K@60fps
+     * - Telephoto: May not support 4K@60fps
+     *
+     * Selection priority:
+     * 1. Supports target resolution (e.g., 4K) at target FPS (e.g., 60fps)
+     * 2. Highest sensor resolution (main camera usually has largest sensor)
+     * 3. Camera ID "0" as tiebreaker (typically the main/wide camera)
      */
     private fun findBackCamera(): String? {
-        // Log all available cameras for debugging
-        Log.i(TAG, "Available cameras on device:")
+        Log.i(TAG, "Enumerating cameras to find best for high-resolution streaming:")
+
+        data class CameraInfo(
+            val id: String,
+            val maxResolution: Long,
+            val supports4K60: Boolean,
+            val hardwareLevel: Int
+        )
+
+        val backCameras = mutableListOf<CameraInfo>()
+
         cameraManager.cameraIdList.forEach { id ->
             val characteristics = cameraManager.getCameraCharacteristics(id)
             val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
-            val facingStr = when (facing) {
-                CameraCharacteristics.LENS_FACING_BACK -> "BACK"
-                CameraCharacteristics.LENS_FACING_FRONT -> "FRONT"
-                CameraCharacteristics.LENS_FACING_EXTERNAL -> "EXTERNAL"
-                else -> "UNKNOWN"
+
+            if (facing == CameraCharacteristics.LENS_FACING_BACK) {
+                val hardwareLevel = characteristics.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL) ?: -1
+                val levelStr = when (hardwareLevel) {
+                    CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY -> "LEGACY"
+                    CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED -> "LIMITED"
+                    CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_FULL -> "FULL"
+                    CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_3 -> "LEVEL_3"
+                    else -> "UNKNOWN"
+                }
+
+                // Get max sensor resolution
+                val sensorSize = characteristics.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
+                val maxResolution = if (sensorSize != null) {
+                    sensorSize.width.toLong() * sensorSize.height.toLong()
+                } else {
+                    0L
+                }
+
+                // Check if supports 4K@60fps
+                val configMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+                val supports4K60 = configMap?.let { map ->
+                    val size4K = Size(3840, 2160)
+                    val outputSizes = map.getOutputSizes(android.graphics.ImageFormat.PRIVATE) ?: emptyArray()
+                    val has4K = outputSizes.any { it.width == 3840 && it.height == 2160 }
+
+                    if (has4K) {
+                        // Check FPS ranges for 4K
+                        val fpsRanges = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) ?: emptyArray()
+                        fpsRanges.any { range ->
+                            range.lower == 60 && range.upper == 60
+                        }
+                    } else {
+                        false
+                    }
+                } ?: false
+
+                backCameras.add(CameraInfo(id, maxResolution, supports4K60, hardwareLevel))
+
+                Log.i(TAG, "  Camera $id: BACK, Level: $levelStr, Sensor: ${maxResolution / 1_000_000}MP, 4K@60fps: $supports4K60")
+            } else {
+                val facingStr = when (facing) {
+                    CameraCharacteristics.LENS_FACING_FRONT -> "FRONT"
+                    CameraCharacteristics.LENS_FACING_EXTERNAL -> "EXTERNAL"
+                    else -> "UNKNOWN"
+                }
+                Log.i(TAG, "  Camera $id: $facingStr (skipped)")
             }
-            val hardwareLevel = characteristics.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)
-            val levelStr = when (hardwareLevel) {
-                CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY -> "LEGACY"
-                CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED -> "LIMITED"
-                CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_FULL -> "FULL"
-                CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_3 -> "LEVEL_3"
-                else -> "UNKNOWN"
-            }
-            Log.i(TAG, "  Camera $id: $facingStr, Level: $levelStr")
         }
 
-        val backCameraId = cameraManager.cameraIdList.find { cameraId ->
-            val characteristics = cameraManager.getCameraCharacteristics(cameraId)
-            val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
-            facing == CameraCharacteristics.LENS_FACING_BACK
+        if (backCameras.isEmpty()) {
+            Log.e(TAG, "No back cameras found!")
+            return null
         }
 
-        Log.i(TAG, "Selected back camera: $backCameraId")
-        return backCameraId
+        // Select best camera based on priority
+        val selectedCamera = backCameras
+            .sortedWith(compareByDescending<CameraInfo> { it.supports4K60 }
+                .thenByDescending { it.maxResolution }
+                .thenBy { it.id.toIntOrNull() ?: Int.MAX_VALUE })  // Prefer ID "0"
+            .first()
+
+        Log.i(TAG, "✓ Selected camera ${selectedCamera.id} (4K@60fps: ${selectedCamera.supports4K60}, ${selectedCamera.maxResolution / 1_000_000}MP)")
+        return selectedCamera.id
     }
 
     /**

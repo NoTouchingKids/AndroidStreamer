@@ -34,10 +34,10 @@ class MainActivity : AppCompatActivity() {
     // Track capture state
     private var isCapturing = false
 
-    // Video configuration (detected from device capabilities)
-    private val targetWidth = 1920
-    private val targetHeight = 1080
-    private var targetFps = 30 // Will be updated based on device support
+    // Video configuration (4K@60fps for Samsung Note 10+)
+    private val targetWidth = 3840   // 4K UHD
+    private val targetHeight = 2160  // 4K UHD
+    private var targetFps = 60       // Will be validated based on device support
 
     companion object {
         private const val TAG = "MainActivity"
@@ -148,7 +148,7 @@ class MainActivity : AppCompatActivity() {
         encoder = H265Encoder(
             width = targetWidth,
             height = targetHeight,
-            bitrate = 30_000_000, // 30 Mbps (headroom for 4K/60fps)
+            bitrate = 100_000_000, // 100 Mbps for 4K@60fps high quality (complex scenes)
             frameRate = targetFps,
             rtpSender = rtpSender
         )
@@ -361,7 +361,7 @@ class MainActivity : AppCompatActivity() {
         encoder = H265Encoder(
             width = targetWidth,
             height = targetHeight,
-            bitrate = 30_000_000, // 30 Mbps (headroom for 4K/60fps)
+            bitrate = 100_000_000, // 100 Mbps for 4K@60fps high quality (complex scenes)
             frameRate = targetFps,  // Use detected FPS, not hardcoded 60
             rtpSender = rtpSender
         )

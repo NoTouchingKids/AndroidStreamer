@@ -83,14 +83,26 @@ class H265Encoder(
             setInteger(MediaFormat.KEY_FRAME_RATE, frameRate)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1) // I-frame every 1 second
             setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain)
-            setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel41)
+            // Level 5.1 supports 4K@60fps (up to 8192x4320@30fps or 3840x2160@60fps)
+            setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel51)
 
             // Low-latency optimizations
             setInteger(MediaFormat.KEY_PRIORITY, 0) // Realtime priority
             setInteger(MediaFormat.KEY_PREPEND_HEADER_TO_SYNC_FRAMES, 1) // Include SPS/PPS with keyframes
 
-            // Bitrate mode: CBR for predictable latency
+            // Bitrate mode: CBR for predictable latency (100 Mbps for 4K@60fps quality)
             setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+
+            // Quality tuning for complex frames (try to set complexity if supported)
+            try {
+                // KEY_COMPLEXITY: 0 (fast), 1 (balanced), 2 (quality)
+                // Higher complexity = better quality at same bitrate (more CPU intensive)
+                // On Samsung Exynos, this may not be supported, so wrap in try-catch
+                setInteger(MediaFormat.KEY_COMPLEXITY, 2) // Maximum quality
+                Log.i(TAG, "Encoder complexity set to maximum (2) for better quality")
+            } catch (e: Exception) {
+                Log.d(TAG, "KEY_COMPLEXITY not supported on this device (expected for Exynos)")
+            }
 
             // Note: KEY_LOW_LATENCY, KEY_LATENCY, KEY_OPERATING_RATE not supported on Exynos HEVC encoder
             // Removed to avoid configure() errors on Samsung devices
