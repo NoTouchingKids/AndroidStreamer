@@ -1,5 +1,7 @@
 package com.example.android_streamer.network
 
+import android.os.Handler
+import android.os.HandlerThread
 import android.util.Log
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -46,6 +48,11 @@ class RTSPClient(
     private var cseq = 1
     private var sessionId: String? = null
 
+    // Keepalive mechanism to prevent session timeout
+    private var keepaliveThread: HandlerThread? = null
+    private var keepaliveHandler: Handler? = null
+    private val keepaliveInterval = 30000L // 30 seconds
+
     // Stream parameters (set before connecting)
     private var width: Int = 1920
     private var height: Int = 1080
@@ -59,6 +66,17 @@ class RTSPClient(
 
     // Callback when RECORD is accepted (ready to send RTP)
     var onReadyToStream: ((serverIp: String, serverRtpPort: Int) -> Unit)? = null
+
+    // Pre-allocated keepalive message (zero-allocation at runtime)
+    private val keepaliveRunnable = object : Runnable {
+        override fun run() {
+            sendGetParameter()
+            // Reschedule if still connected
+            if (isConnected.get()) {
+                keepaliveHandler?.postDelayed(this, keepaliveInterval)
+            }
+        }
+    }
 
     /**
      * Set stream parameters (must call before connect).
@@ -120,6 +138,9 @@ class RTSPClient(
                 }
 
                 Log.i(TAG, "✓ RTSP session established! Ready to stream.")
+
+                // Start keepalive to prevent session timeout
+                startKeepalive()
 
                 // Notify that we're ready to send RTP
                 onReadyToStream?.invoke(serverIp, serverRtpPort)
@@ -225,6 +246,54 @@ class RTSPClient(
     }
 
     /**
+     * Send GET_PARAMETER to keep session alive (prevents 60s timeout).
+     */
+    private fun sendGetParameter() {
+        val session = sessionId ?: return
+
+        try {
+            val request = "GET_PARAMETER rtsp://$serverIp:$serverPort$streamPath RTSP/1.0\r\n" +
+                          "CSeq: ${cseq++}\r\n" +
+                          "Session: $session\r\n" +
+                          "\r\n"
+
+            writer?.print(request)
+            writer?.flush()
+
+            // Don't wait for response - keepalive is fire-and-forget
+            Log.d(TAG, "Keepalive sent (GET_PARAMETER)")
+        } catch (e: Exception) {
+            Log.w(TAG, "Keepalive failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Start keepalive timer to prevent session timeout.
+     */
+    private fun startKeepalive() {
+        // Create background thread for keepalive (low priority, minimal overhead)
+        keepaliveThread = HandlerThread("RTSP-Keepalive").apply {
+            start()
+            keepaliveHandler = Handler(looper)
+        }
+
+        // Schedule first keepalive
+        keepaliveHandler?.postDelayed(keepaliveRunnable, keepaliveInterval)
+        Log.i(TAG, "Keepalive started (30s interval)")
+    }
+
+    /**
+     * Stop keepalive timer.
+     */
+    private fun stopKeepalive() {
+        keepaliveHandler?.removeCallbacks(keepaliveRunnable)
+        keepaliveThread?.quitSafely()
+        keepaliveThread = null
+        keepaliveHandler = null
+        Log.d(TAG, "Keepalive stopped")
+    }
+
+    /**
      * Send RTSP request and check for 200 OK response.
      */
     private fun sendRequestAndCheckResponse(request: String, method: String): Boolean {
@@ -309,6 +378,9 @@ class RTSPClient(
      */
     fun disconnect() {
         if (!isConnected.get()) return
+
+        // Stop keepalive first
+        stopKeepalive()
 
         // Perform network operations on background thread to avoid NetworkOnMainThreadException
         thread {

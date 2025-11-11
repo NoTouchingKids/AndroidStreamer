@@ -50,7 +50,7 @@ class RTPSender(
     private val packet = DatagramPacket(packetBuffer, packetBuffer.size)
 
     // Temp buffer for frame copy (reused, pre-allocated)
-    private val frameBuffer = ByteArray(256 * 1024) // 256KB max frame
+    private val frameBuffer = ByteArray(512 * 1024) // 512KB max frame (handles 1080p@60fps keyframes ~290KB)
 
     // RTP state
     private var sequenceNumber: Int = 1
@@ -328,7 +328,9 @@ class RTPSender(
 
                 // H.265 FU header (3 bytes)
                 // Byte 0-1: PayloadHdr (type=49 for FU)
-                packetBuffer[offset++] = (49 shl 1).toByte() // Type = 49 (FU)
+                // Preserve LayerId MSB (bit 0 of nalHeader1) to avoid packet corruption
+                val layerIdMsb = nalHeader1.toInt() and 0x01
+                packetBuffer[offset++] = ((49 shl 1) or layerIdMsb).toByte() // Type = 49 (FU)
                 packetBuffer[offset++] = nalHeader2
 
                 // Byte 2: FU header (S, E, R, FuType)
