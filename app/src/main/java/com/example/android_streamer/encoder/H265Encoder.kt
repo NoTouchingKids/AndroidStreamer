@@ -74,7 +74,17 @@ class H265Encoder(
 
         // Find best hardware encoder
         val codecName = findBestHEVCEncoder()
+
+        Log.i(TAG, "========================================")
+        Log.i(TAG, "H.265 ENCODER INITIALIZATION")
+        Log.i(TAG, "========================================")
         Log.i(TAG, "Selected codec: $codecName")
+        Log.i(TAG, "Configuration:")
+        Log.i(TAG, "  Resolution: ${width}x${height}")
+        Log.i(TAG, "  Frame rate: ${frameRate} fps")
+        Log.i(TAG, "  Bitrate: ${bitrate / 1_000_000} Mbps")
+        Log.i(TAG, "  I-frame interval: 0.5s")
+        Log.i(TAG, "========================================")
 
         // Configure MediaCodec
         val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_HEVC, width, height).apply {

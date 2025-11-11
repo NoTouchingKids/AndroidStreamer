@@ -320,12 +320,16 @@ class Camera2Controller(private val context: Context) {
      * 3. Camera ID "0" as tiebreaker (typically the main/wide camera)
      */
     private fun findBackCamera(): String? {
-        Log.i(TAG, "Enumerating cameras to find best for high-resolution streaming:")
+        Log.i(TAG, "========================================")
+        Log.i(TAG, "CAMERA ENUMERATION STARTING")
+        Log.i(TAG, "Total cameras: ${cameraManager.cameraIdList.size}")
+        Log.i(TAG, "========================================")
 
         data class CameraInfo(
             val id: String,
             val maxResolution: Long,
-            val supports4K60: Boolean,
+            val supports1080p60: Boolean,
+            val supports1080p120: Boolean,
             val hardwareLevel: Int
         )
 
@@ -334,6 +338,15 @@ class Camera2Controller(private val context: Context) {
         cameraManager.cameraIdList.forEach { id ->
             val characteristics = cameraManager.getCameraCharacteristics(id)
             val facing = characteristics.get(CameraCharacteristics.LENS_FACING)
+
+            val facingStr = when (facing) {
+                CameraCharacteristics.LENS_FACING_BACK -> "BACK"
+                CameraCharacteristics.LENS_FACING_FRONT -> "FRONT"
+                CameraCharacteristics.LENS_FACING_EXTERNAL -> "EXTERNAL"
+                else -> "UNKNOWN"
+            }
+
+            Log.i(TAG, "Camera $id ($facingStr):")
 
             if (facing == CameraCharacteristics.LENS_FACING_BACK) {
                 val hardwareLevel = characteristics.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL) ?: -1
@@ -348,55 +361,70 @@ class Camera2Controller(private val context: Context) {
                 // Get max sensor resolution
                 val sensorSize = characteristics.get(CameraCharacteristics.SENSOR_INFO_PIXEL_ARRAY_SIZE)
                 val maxResolution = if (sensorSize != null) {
-                    sensorSize.width.toLong() * sensorSize.height.toLong()
+                    val mp = sensorSize.width.toLong() * sensorSize.height.toLong()
+                    Log.i(TAG, "  Sensor: ${sensorSize.width}x${sensorSize.height} (${mp/1_000_000}MP)")
+                    mp
                 } else {
+                    Log.w(TAG, "  Sensor: UNKNOWN")
                     0L
                 }
 
-                // Check if supports 4K@60fps
+                Log.i(TAG, "  Hardware level: $levelStr")
+
+                // Get all supported output sizes
                 val configMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-                val supports4K60 = configMap?.let { map ->
-                    val size4K = Size(3840, 2160)
-                    val outputSizes = map.getOutputSizes(android.graphics.ImageFormat.PRIVATE) ?: emptyArray()
-                    val has4K = outputSizes.any { it.width == 3840 && it.height == 2160 }
-
-                    if (has4K) {
-                        // Check FPS ranges for 4K
-                        val fpsRanges = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) ?: emptyArray()
-                        fpsRanges.any { range ->
-                            range.lower == 60 && range.upper == 60
-                        }
-                    } else {
-                        false
-                    }
-                } ?: false
-
-                backCameras.add(CameraInfo(id, maxResolution, supports4K60, hardwareLevel))
-
-                Log.i(TAG, "  Camera $id: BACK, Level: $levelStr, Sensor: ${maxResolution / 1_000_000}MP, 4K@60fps: $supports4K60")
-            } else {
-                val facingStr = when (facing) {
-                    CameraCharacteristics.LENS_FACING_FRONT -> "FRONT"
-                    CameraCharacteristics.LENS_FACING_EXTERNAL -> "EXTERNAL"
-                    else -> "UNKNOWN"
+                val outputSizes = configMap?.getOutputSizes(android.graphics.ImageFormat.PRIVATE) ?: emptyArray()
+                val top5Sizes = outputSizes.sortedByDescending { it.width * it.height }.take(5)
+                Log.i(TAG, "  Top 5 resolutions:")
+                top5Sizes.forEach { size ->
+                    Log.i(TAG, "    ${size.width}x${size.height}")
                 }
-                Log.i(TAG, "  Camera $id: $facingStr (skipped)")
+
+                // Check FPS ranges
+                val fpsRanges = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) ?: emptyArray()
+                Log.i(TAG, "  FPS ranges:")
+                fpsRanges.forEach { range ->
+                    Log.i(TAG, "    [${range.lower}, ${range.upper}]")
+                }
+
+                // Check specific capabilities for 1080p
+                val has1080p = outputSizes.any { it.width == 1920 && it.height == 1080 }
+                val has60fps = fpsRanges.any { it.upper >= 60 }
+                val has120fps = fpsRanges.any { it.upper >= 120 }
+                val supports1080p60 = has1080p && has60fps
+                val supports1080p120 = has1080p && has120fps
+
+                Log.i(TAG, "  Capabilities: 1080p=$has1080p, 60fps=$has60fps, 120fps=$has120fps")
+                Log.i(TAG, "  → 1080p@60fps: $supports1080p60")
+                Log.i(TAG, "  → 1080p@120fps: $supports1080p120")
+
+                backCameras.add(CameraInfo(id, maxResolution, supports1080p60, supports1080p120, hardwareLevel))
+            } else {
+                Log.i(TAG, "  Skipped (not back camera)")
             }
+            Log.i(TAG, "----------------------------------------")
         }
 
         if (backCameras.isEmpty()) {
-            Log.e(TAG, "No back cameras found!")
+            Log.e(TAG, "✗ NO BACK CAMERAS FOUND!")
             return null
         }
 
-        // Select best camera based on priority
+        // Select best camera: prioritize 1080p@60fps support, then resolution
         val selectedCamera = backCameras
-            .sortedWith(compareByDescending<CameraInfo> { it.supports4K60 }
+            .sortedWith(compareByDescending<CameraInfo> { it.supports1080p60 }
+                .thenByDescending { it.supports1080p120 }
                 .thenByDescending { it.maxResolution }
-                .thenBy { it.id.toIntOrNull() ?: Int.MAX_VALUE })  // Prefer ID "0"
+                .thenBy { it.id.toIntOrNull() ?: Int.MAX_VALUE })
             .first()
 
-        Log.i(TAG, "✓ Selected camera ${selectedCamera.id} (4K@60fps: ${selectedCamera.supports4K60}, ${selectedCamera.maxResolution / 1_000_000}MP)")
+        Log.i(TAG, "========================================")
+        Log.i(TAG, "✓ SELECTED: Camera ${selectedCamera.id}")
+        Log.i(TAG, "  ${selectedCamera.maxResolution/1_000_000}MP")
+        Log.i(TAG, "  1080p@60fps: ${selectedCamera.supports1080p60}")
+        Log.i(TAG, "  1080p@120fps: ${selectedCamera.supports1080p120}")
+        Log.i(TAG, "========================================")
+
         return selectedCamera.id
     }
 
@@ -505,7 +533,9 @@ class Camera2Controller(private val context: Context) {
             }
         }
 
-        Log.i(TAG, "Final selected FPS: $selectedFps")
+        Log.i(TAG, "========================================")
+        Log.i(TAG, "✓ FINAL FPS: $selectedFps")
+        Log.i(TAG, "========================================")
         return selectedFps
     }
 
