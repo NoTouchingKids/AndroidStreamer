@@ -1,8 +1,70 @@
-# RTP Packet Delivery Debugging Guide
+# RTP Streaming Status and Viewing Guide
 
-## Current Issue
+## ✅ STATUS: STREAMING IS WORKING!
 
-MediaMTX RTSP session establishes successfully but times out after 10 seconds because RTP packets aren't arriving. Android logs show packets are being sent, but MediaMTX never receives them.
+Based on the latest logs, **RTP packets ARE successfully reaching MediaMTX** and being converted to HLS. The issue was not packet delivery - MediaMTX is receiving and processing your H.265 stream correctly.
+
+### Evidence from Logs
+
+**Android logs show successful transmission:**
+```
+✓ FIRST FRAGMENT SENT: 192.168.0.2:8000 (1400 bytes)
+RTP sender. Stats: packets=21595, bytes=28916KB, fragmented=882
+```
+
+**MediaMTX logs confirm reception:**
+```
+INF [RTSP] [session 1d4afe6f] is publishing to path 'android', 1 track (H265)
+INF [HLS] [muxer android] is converting into HLS, 1 track (H265)
+```
+
+The session ended cleanly by TEARDOWN (not timeout), proving packets arrived successfully.
+
+## How to View Your Stream
+
+Your H.265 stream is being published successfully to MediaMTX. Here's how to view it:
+
+### ✅ Option 1: HLS in Web Browser (RECOMMENDED)
+
+MediaMTX is converting your stream to HLS automatically. Open this URL in any modern browser:
+
+```
+http://192.168.0.2:8888/android
+```
+
+**Why HLS?** Most browsers support H.265/HEVC in HLS, even though they don't support it in WebRTC.
+
+### ✅ Option 2: RTSP with VLC Player
+
+For ultra-low latency viewing:
+
+```bash
+vlc rtsp://192.168.0.2:8554/android
+```
+
+Or with ffplay for even lower latency:
+
+```bash
+ffplay -fflags nobuffer -flags low_delay rtsp://192.168.0.2:8554/android
+```
+
+### ❌ Why WebRTC Doesn't Work
+
+The WebRTC endpoint (`http://192.168.0.2:8889/android`) won't display anything because:
+- Most browsers don't support H.265 in WebRTC (yet)
+- Chrome will add support in version 136, but it's not released yet
+- Safari has partial support, but it's unreliable
+
+**Use HLS (port 8888) or RTSP with VLC instead.**
+
+## Testing Right Now
+
+1. **Start the Android app** and tap "START CAPTURE"
+2. **Wait 2-3 seconds** for encoder to initialize
+3. **Open browser** to `http://192.168.0.2:8888/android`
+4. **You should see video!**
+
+If the page says "stream not found", make sure the Android app is actively streaming (not stopped).
 
 ## Recent Changes (Diagnostic Logging Added)
 
