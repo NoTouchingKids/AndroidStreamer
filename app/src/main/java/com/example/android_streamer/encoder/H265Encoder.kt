@@ -80,10 +80,23 @@ class H265Encoder(
             setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain)
             setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel41)
 
-            // Low-latency optimizations
+            // Ultra-low-latency optimizations
             setInteger(MediaFormat.KEY_PRIORITY, 0) // Realtime priority
-            setInteger(MediaFormat.KEY_LATENCY, 0) // Request lowest latency
+            setInteger(MediaFormat.KEY_LATENCY, 0) // Request lowest latency (no buffering)
             setInteger(MediaFormat.KEY_PREPEND_HEADER_TO_SYNC_FRAMES, 1) // Include SPS/PPS with keyframes
+
+            // Additional latency optimizations
+            try {
+                setInteger(MediaFormat.KEY_LOW_LATENCY, 1) // Enable low-latency mode (Android 11+)
+            } catch (e: Exception) {
+                Log.d(TAG, "KEY_LOW_LATENCY not supported (requires Android 11+)")
+            }
+
+            // Set operating rate to hint real-time encoding
+            setInteger(MediaFormat.KEY_OPERATING_RATE, Int.MAX_VALUE) // Maximum priority for real-time
+
+            // Bitrate mode: CBR for predictable latency
+            setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
         }
 
         Log.d(TAG, "Creating MediaCodec encoder...")
