@@ -162,10 +162,15 @@ class RTSPClient(
      * Send SETUP request to negotiate RTP transport.
      */
     private fun sendSetup(): Boolean {
+        // Note: Using RTP/AVP/UDP for explicit UDP transport
         val request = "SETUP rtsp://$serverIp:$serverPort$streamPath/track0 RTSP/1.0\r\n" +
                       "CSeq: ${cseq++}\r\n" +
-                      "Transport: RTP/AVP;unicast;client_port=$clientRtpPort-${clientRtpPort + 1};mode=record\r\n" +
+                      "Transport: RTP/AVP/UDP;unicast;client_port=$clientRtpPort-${clientRtpPort + 1};mode=record\r\n" +
                       "\r\n"
+
+        Log.d(TAG, "=== SETUP Request ===")
+        Log.d(TAG, "  Transport: RTP/AVP/UDP;unicast;client_port=$clientRtpPort-${clientRtpPort + 1};mode=record")
+        Log.d(TAG, "=====================")
 
         val response = sendRequestAndGetResponse(request, "SETUP") ?: return false
 

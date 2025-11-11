@@ -82,18 +82,23 @@ class RTPSender(
             // Bind to specific client port if specified (required for RTSP publishing)
             socket = if (clientPort > 0) {
                 Log.i(TAG, "Binding to client port $clientPort (as declared in RTSP SETUP)")
-                DatagramSocket(clientPort)
+                val sock = DatagramSocket(clientPort)
+                Log.i(TAG, "✓ Socket bound: local=${sock.localAddress.hostAddress}:${sock.localPort}")
+                sock
             } else {
-                DatagramSocket()
+                val sock = DatagramSocket()
+                Log.i(TAG, "✓ Socket bound: local=${sock.localAddress.hostAddress}:${sock.localPort}")
+                sock
             }
 
             // Optimize for local network
             socket?.sendBufferSize = 512 * 1024 // 512KB for burst traffic
             socket?.trafficClass = 0x10 // IPTOS_LOWDELAY
 
-            Log.i(TAG, "RTP sender started: SSRC=0x${ssrc.toString(16)}, MTU=$MTU")
+            Log.i(TAG, "✓ RTP sender ready: SSRC=0x${ssrc.toString(16)}, MTU=$MTU")
+            Log.i(TAG, "✓ Will send: ${socket?.localAddress?.hostAddress}:${socket?.localPort} -> ${serverAddress?.hostAddress}:$serverPort")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to start RTP sender", e)
+            Log.e(TAG, "✗ Failed to start RTP sender", e)
             throw e
         }
     }
