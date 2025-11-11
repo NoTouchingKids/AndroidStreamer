@@ -105,8 +105,9 @@ class MainActivity : AppCompatActivity() {
         // Initialize network streaming if enabled
         if (ENABLE_NETWORK_STREAMING) {
             // RTSP client mode: Android connects TO MediaMTX
-            rtpSender = RTPSender(MEDIAMTX_SERVER_IP, RTP_PORT)
             rtspClient = RTSPClient(MEDIAMTX_SERVER_IP, MEDIAMTX_RTSP_PORT, STREAM_PATH)
+            // Create RTPSender with client port from RTSP (must match SETUP declaration)
+            rtpSender = RTPSender(MEDIAMTX_SERVER_IP, RTP_PORT, rtspClient!!.getClientRtpPort())
 
             // Set callback for when RTSP session is ready
             rtspClient?.onReadyToStream = { serverIp, serverPort ->
@@ -325,8 +326,8 @@ class MainActivity : AppCompatActivity() {
 
         // Reinitialize network components if enabled
         if (ENABLE_NETWORK_STREAMING) {
-            rtpSender = RTPSender(MEDIAMTX_SERVER_IP, RTP_PORT)
             rtspClient = RTSPClient(MEDIAMTX_SERVER_IP, MEDIAMTX_RTSP_PORT, STREAM_PATH)
+            rtpSender = RTPSender(MEDIAMTX_SERVER_IP, RTP_PORT, rtspClient!!.getClientRtpPort())
 
             rtspClient?.onReadyToStream = { serverIp, serverPort ->
                 Log.i(TAG, "RTSP reconnected! Sending RTP to $serverIp:$serverPort")

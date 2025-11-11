@@ -28,10 +28,12 @@ import java.nio.ByteBuffer
  *
  * @param serverIp IP address of MediaMTX server (e.g., "192.168.1.100")
  * @param serverPort RTP port from MediaMTX (e.g., 8000)
+ * @param clientPort Local source port to bind to (must match RTSP SETUP client_port)
  */
 class RTPSender(
     private var serverIp: String,
-    private var serverPort: Int
+    private var serverPort: Int,
+    private val clientPort: Int = 0
 ) {
     private var socket: DatagramSocket? = null
     private var serverAddress: InetAddress? = null
@@ -77,7 +79,13 @@ class RTPSender(
 
         try {
             serverAddress = InetAddress.getByName(serverIp)
-            socket = DatagramSocket()
+            // Bind to specific client port if specified (required for RTSP publishing)
+            socket = if (clientPort > 0) {
+                Log.i(TAG, "Binding to client port $clientPort (as declared in RTSP SETUP)")
+                DatagramSocket(clientPort)
+            } else {
+                DatagramSocket()
+            }
 
             // Optimize for local network
             socket?.sendBufferSize = 512 * 1024 // 512KB for burst traffic

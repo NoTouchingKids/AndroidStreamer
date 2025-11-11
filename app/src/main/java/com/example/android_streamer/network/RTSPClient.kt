@@ -293,35 +293,38 @@ class RTSPClient(
     fun disconnect() {
         if (!isConnected.get()) return
 
-        try {
-            // Send TEARDOWN if we have a session
-            sessionId?.let { session ->
-                val request = "TEARDOWN rtsp://$serverIp:$serverPort$streamPath RTSP/1.0\r\n" +
-                              "CSeq: ${cseq++}\r\n" +
-                              "Session: $session\r\n" +
-                              "\r\n"
+        // Perform network operations on background thread to avoid NetworkOnMainThreadException
+        thread {
+            try {
+                // Send TEARDOWN if we have a session
+                sessionId?.let { session ->
+                    val request = "TEARDOWN rtsp://$serverIp:$serverPort$streamPath RTSP/1.0\r\n" +
+                                  "CSeq: ${cseq++}\r\n" +
+                                  "Session: $session\r\n" +
+                                  "\r\n"
 
-                writer?.print(request)
-                writer?.flush()
-                Log.i(TAG, "Sent TEARDOWN")
+                    writer?.print(request)
+                    writer?.flush()
+                    Log.i(TAG, "Sent TEARDOWN")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Error sending TEARDOWN", e)
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error sending TEARDOWN", e)
+
+            // Close connections
+            try {
+                reader?.close()
+                writer?.close()
+                socket?.close()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error closing connections", e)
+            }
+
+            isConnected.set(false)
+            sessionId = null
+
+            Log.i(TAG, "Disconnected from MediaMTX")
         }
-
-        // Close connections
-        try {
-            reader?.close()
-            writer?.close()
-            socket?.close()
-        } catch (e: Exception) {
-            Log.w(TAG, "Error closing connections", e)
-        }
-
-        isConnected.set(false)
-        sessionId = null
-
-        Log.i(TAG, "Disconnected from MediaMTX")
     }
 
     /**
@@ -333,6 +336,12 @@ class RTSPClient(
      * Get connection URL for display.
      */
     fun getServerUrl(): String = "rtsp://$serverIp:$serverPort$streamPath"
+
+    /**
+     * Get the client RTP port that was declared in SETUP.
+     * RTPSender must bind to this port for MediaMTX to accept packets.
+     */
+    fun getClientRtpPort(): Int = clientRtpPort
 
     companion object {
         private const val TAG = "RTSPClient"
