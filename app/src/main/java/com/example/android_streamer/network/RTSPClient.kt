@@ -10,7 +10,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 
 /**
- * RTSP client for publishing H.265 stream to MediaMTX server.
+ * RTSP client for publishing H.264 stream to MediaMTX server.
  *
  * This is the STANDARD approach where:
  * - MediaMTX = RTSP Server (stable IP, always listening)
@@ -18,7 +18,7 @@ import kotlin.concurrent.thread
  *
  * Flow:
  * 1. Connect to MediaMTX via TCP
- * 2. ANNOUNCE - Tell server about our H.265 stream (with SDP)
+ * 2. ANNOUNCE - Tell server about our H.264 stream (with SDP)
  * 3. SETUP - Negotiate RTP ports
  * 4. RECORD - Start publishing (instead of PLAY for viewing)
  * 5. Send RTP packets via UDP
@@ -301,17 +301,18 @@ class RTSPClient(
         val spsParam = sps ?: ""
         val ppsParam = pps ?: ""
 
+        // H.264 uses sprop-parameter-sets with comma-separated SPS,PPS
         return "v=0\r\n" +
                "o=- 0 0 IN IP4 127.0.0.1\r\n" +
-               "s=Android H.265 Stream\r\n" +
+               "s=Android H.264 Stream\r\n" +
                "c=IN IP4 $serverIp\r\n" +
                "t=0 0\r\n" +
                "a=tool:AndroidStreamer\r\n" +
                "a=type:broadcast\r\n" +
                "a=control:*\r\n" +
                "m=video $clientRtpPort RTP/AVP 96\r\n" +
-               "a=rtpmap:96 H265/90000\r\n" +
-               "a=fmtp:96 sprop-sps=$spsParam;sprop-pps=$ppsParam\r\n" +
+               "a=rtpmap:96 H264/90000\r\n" +
+               "a=fmtp:96 packetization-mode=1;sprop-parameter-sets=$spsParam,$ppsParam\r\n" +
                "a=control:track0\r\n"
     }
 

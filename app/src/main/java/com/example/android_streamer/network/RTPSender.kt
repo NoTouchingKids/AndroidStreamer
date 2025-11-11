@@ -10,12 +10,12 @@ import java.net.InetSocketAddress
 import java.nio.ByteBuffer
 
 /**
- * RTP sender for H.265/HEVC to MediaMTX server (LOCAL NETWORK ONLY).
+ * RTP sender for H.264/AVC to MediaMTX server (LOCAL NETWORK ONLY).
  *
  * Zero-allocation design with automatic fragmentation:
  * - Pre-allocated packet buffer for single packets
  * - Automatic fragmentation for frames > MTU
- * - Proper H.265 FU (Fragmentation Unit) for large keyframes
+ * - Proper H.264 FU-A (Fragmentation Unit) for large keyframes
  * - Fire-and-forget UDP (no retries)
  *
  * MediaMTX Configuration:
@@ -43,7 +43,7 @@ class RTPSender(
     // Pre-allocated packet buffer (MTU-sized for fragmentation)
     private val MTU = 1400 // Conservative for local network
     private val RTP_HEADER_SIZE = 12
-    private val FU_HEADER_SIZE = 3 // H.265 FU header
+    private val FU_HEADER_SIZE = 2 // H.264 FU-A header
     private val MAX_FRAGMENT_PAYLOAD = MTU - RTP_HEADER_SIZE - FU_HEADER_SIZE
 
     private val packetBuffer = ByteArray(MTU)
@@ -58,7 +58,7 @@ class RTPSender(
 
     // RTP constants
     private val RTP_VERSION = 2
-    private val RTP_PAYLOAD_TYPE = 96 // H.265
+    private val RTP_PAYLOAD_TYPE = 96 // H.264
 
     // Stats
     @Volatile
@@ -206,7 +206,7 @@ class RTPSender(
     }
 
     /**
-     * Fragment large frame into multiple RTP packets using H.265 FU.
+     * Fragment large frame into multiple RTP packets using H.264 FU-A.
      *
      * Zero-allocation: reuses packet buffer for each fragment.
      */
@@ -217,13 +217,13 @@ class RTPSender(
         rtpTimestamp: Int,
         isKeyFrame: Boolean
     ) {
-        // H.265 NAL unit header is first 2 bytes
-        val nalHeader1 = frameBuffer[0]
-        val nalHeader2 = frameBuffer[1]
-        val nalType = (nalHeader1.toInt() shr 1) and 0x3F
+        // H.264 NAL unit header is first byte
+        val nalHeader = frameBuffer[0]
+        val nalType = nalHeader.toInt() and 0x1F // Lower 5 bits
+        val nalNri = nalHeader.toInt() and 0x60  // NRI (bits 5-6)
 
         // Calculate number of fragments
-        val nalPayloadSize = frameSize - 2 // Exclude NAL header
+        val nalPayloadSize = frameSize - 1 // Exclude NAL header
         val numFragments = (nalPayloadSize + MAX_FRAGMENT_PAYLOAD - 1) / MAX_FRAGMENT_PAYLOAD
 
         if (isKeyFrame) {
@@ -232,7 +232,7 @@ class RTPSender(
 
         fragmentedFrames++
 
-        var payloadOffset = 2 // Skip NAL header
+        var payloadOffset = 1 // Skip NAL header
         var fragmentIndex = 0
 
         while (payloadOffset < frameSize) {
@@ -247,15 +247,14 @@ class RTPSender(
                 buildRtpHeader(packetBuffer, offset, isLast, rtpTimestamp)
                 offset += RTP_HEADER_SIZE
 
-                // H.265 FU header (3 bytes)
-                // Byte 0-1: PayloadHdr (type=49 for FU)
-                packetBuffer[offset++] = (49 shl 1).toByte() // Type = 49 (FU)
-                packetBuffer[offset++] = nalHeader2
+                // H.264 FU-A header (2 bytes)
+                // Byte 0: FU indicator (F=0, NRI=from original, Type=28 for FU-A)
+                packetBuffer[offset++] = (nalNri or 28).toByte() // Type = 28 (FU-A)
 
-                // Byte 2: FU header
+                // Byte 1: FU header (S, E, R, Type)
                 var fuHeader = nalType
-                if (isFirst) fuHeader = fuHeader or 0x80 // S bit
-                if (isLast) fuHeader = fuHeader or 0x40  // E bit
+                if (isFirst) fuHeader = fuHeader or 0x80 // S bit (start)
+                if (isLast) fuHeader = fuHeader or 0x40  // E bit (end)
                 packetBuffer[offset++] = fuHeader.toByte()
 
                 // Copy fragment payload

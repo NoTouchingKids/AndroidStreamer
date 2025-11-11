@@ -13,14 +13,14 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.example.android_streamer.camera.Camera2Controller
 import com.example.android_streamer.databinding.ActivityMainBinding
-import com.example.android_streamer.encoder.H265Encoder
+import com.example.android_streamer.encoder.H264Encoder
 import com.example.android_streamer.network.RTPSender
 import com.example.android_streamer.network.RTSPClient
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var cameraController: Camera2Controller
-    private lateinit var encoder: H265Encoder
+    private lateinit var encoder: H264Encoder
     private var rtpSender: RTPSender? = null
     private var rtspClient: RTSPClient? = null
 
@@ -145,7 +145,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Initialize encoder with detected FPS
-        encoder = H265Encoder(
+        encoder = H264Encoder(
             width = targetWidth,
             height = targetHeight,
             bitrate = 8_000_000, // 8 Mbps
@@ -197,8 +197,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun initializeEncoder() {
         // Set callback to receive codec data when it's ready
-        encoder.onCodecDataReady = { vps, sps, pps ->
-            Log.i(TAG, "Codec data received: VPS=${vps?.size ?: 0}B, SPS=${sps.size}B, PPS=${pps.size}B")
+        encoder.onCodecDataReady = { sps, pps ->
+            Log.i(TAG, "Codec data received: SPS=${sps.size}B, PPS=${pps.size}B")
 
             // Now we can set stream parameters and connect RTSP client
             rtspClient?.let { client ->
@@ -358,7 +358,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Reinitialize encoder for next session
-        encoder = H265Encoder(
+        encoder = H264Encoder(
             width = targetWidth,
             height = targetHeight,
             bitrate = 8_000_000,
