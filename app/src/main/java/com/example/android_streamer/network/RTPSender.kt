@@ -129,12 +129,12 @@ class RTPSender(
     }
 
     /**
-     * Send H.265 frame to MediaMTX over RTP.
+     * Send H.264 frame to MediaMTX over RTP.
      *
-     * Automatically fragments frames > MTU using H.265 FU packets.
-     * Small frames sent as single packets, large frames fragmented.
+     * H.264 keyframes may contain multiple NAL units (SPS + PPS + IDR).
+     * This function parses start codes and sends each NAL unit separately.
      *
-     * @param buffer MediaCodec output buffer
+     * @param buffer MediaCodec output buffer (Annex B format with start codes)
      * @param timestampUs Presentation timestamp in microseconds
      * @param isKeyFrame Whether this is a keyframe
      */
@@ -150,23 +150,107 @@ class RTPSender(
             return
         }
 
-        // Copy frame to temp buffer (needed for fragmentation)
+        // Copy frame to temp buffer
         val originalPosition = buffer.position()
         buffer.get(frameBuffer, 0, frameSize)
-        buffer.position(originalPosition) // Reset for potential retry
+        buffer.position(originalPosition)
 
         // Convert timestamp to RTP (90kHz clock)
         val rtpTimestamp = (timestampUs * 90 / 1000).toInt()
 
-        // Decide: single packet or fragment
-        if (frameSize <= MTU - RTP_HEADER_SIZE) {
-            // Small frame - send as single packet
-            sendSinglePacket(sock, addr, frameSize, rtpTimestamp, true)
-        } else {
-            // Large frame - fragment it
-            sendFragmented(sock, addr, frameSize, rtpTimestamp, isKeyFrame)
+        // Parse and send each NAL unit separately
+        val nalUnits = parseNalUnits(frameBuffer, frameSize)
+
+        if (nalUnits.isEmpty()) {
+            Log.w(TAG, "No NAL units found in frame")
+            return
+        }
+
+        if (isKeyFrame && nalUnits.size > 1) {
+            Log.d(TAG, "Keyframe contains ${nalUnits.size} NAL units")
+        }
+
+        // Send each NAL unit
+        for (i in nalUnits.indices) {
+            val nal = nalUnits[i]
+            val isLastNal = (i == nalUnits.size - 1)
+
+            // Copy NAL to beginning of frameBuffer for sending
+            System.arraycopy(frameBuffer, nal.offset, frameBuffer, 0, nal.size)
+
+            // Send NAL (fragment if necessary)
+            if (nal.size <= MTU - RTP_HEADER_SIZE) {
+                // Small NAL - send as single packet (marker bit on last NAL only)
+                sendSinglePacket(sock, addr, nal.size, rtpTimestamp, isLastNal)
+            } else {
+                // Large NAL - fragment it (marker bit set on last fragment automatically)
+                sendFragmentedNal(sock, addr, nal.size, rtpTimestamp, isLastNal)
+            }
         }
     }
+
+    /**
+     * Parse H.264 NAL units from Annex B format buffer.
+     * Returns list of NAL unit offsets and sizes.
+     */
+    private fun parseNalUnits(buffer: ByteArray, bufferSize: Int): List<NalUnit> {
+        val nalUnits = mutableListOf<NalUnit>()
+        var offset = 0
+
+        while (offset < bufferSize) {
+            // Find start code (0x00000001 or 0x000001)
+            val startCodeSize = when {
+                offset + 3 < bufferSize &&
+                buffer[offset] == 0.toByte() &&
+                buffer[offset + 1] == 0.toByte() &&
+                buffer[offset + 2] == 0.toByte() &&
+                buffer[offset + 3] == 1.toByte() -> 4
+
+                offset + 2 < bufferSize &&
+                buffer[offset] == 0.toByte() &&
+                buffer[offset + 1] == 0.toByte() &&
+                buffer[offset + 2] == 1.toByte() -> 3
+
+                else -> 0
+            }
+
+            if (startCodeSize == 0) {
+                offset++
+                continue
+            }
+
+            // Found start code, skip it
+            val nalStart = offset + startCodeSize
+
+            // Find next start code or end of buffer
+            var nalEnd = nalStart + 1
+            while (nalEnd < bufferSize) {
+                if ((nalEnd + 3 < bufferSize &&
+                    buffer[nalEnd] == 0.toByte() &&
+                    buffer[nalEnd + 1] == 0.toByte() &&
+                    buffer[nalEnd + 2] == 0.toByte() &&
+                    buffer[nalEnd + 3] == 1.toByte()) ||
+                    (nalEnd + 2 < bufferSize &&
+                    buffer[nalEnd] == 0.toByte() &&
+                    buffer[nalEnd + 1] == 0.toByte() &&
+                    buffer[nalEnd + 2] == 1.toByte())) {
+                    break
+                }
+                nalEnd++
+            }
+
+            val nalSize = nalEnd - nalStart
+            if (nalSize > 0) {
+                nalUnits.add(NalUnit(nalStart, nalSize))
+            }
+
+            offset = nalEnd
+        }
+
+        return nalUnits
+    }
+
+    private data class NalUnit(val offset: Int, val size: Int)
 
     /**
      * Send small frame as single RTP packet.
@@ -209,16 +293,16 @@ class RTPSender(
     }
 
     /**
-     * Fragment large frame into multiple RTP packets using H.264 FU-A.
+     * Fragment large NAL unit into multiple RTP packets using H.264 FU-A.
      *
      * Zero-allocation: reuses packet buffer for each fragment.
      */
-    private fun sendFragmented(
+    private fun sendFragmentedNal(
         sock: DatagramSocket,
         addr: InetAddress,
-        frameSize: Int,
+        nalSize: Int,
         rtpTimestamp: Int,
-        isKeyFrame: Boolean
+        isLastNal: Boolean
     ) {
         // H.264 NAL unit header is first byte
         val nalHeader = frameBuffer[0]
@@ -226,28 +310,26 @@ class RTPSender(
         val nalNri = nalHeader.toInt() and 0x60  // NRI (bits 5-6)
 
         // Calculate number of fragments
-        val nalPayloadSize = frameSize - 1 // Exclude NAL header
+        val nalPayloadSize = nalSize - 1 // Exclude NAL header
         val numFragments = (nalPayloadSize + MAX_FRAGMENT_PAYLOAD - 1) / MAX_FRAGMENT_PAYLOAD
 
-        if (isKeyFrame) {
-            Log.d(TAG, "Fragmenting keyframe: $frameSize bytes -> $numFragments packets")
-        }
+        Log.d(TAG, "Fragmenting NAL type $nalType: $nalSize bytes -> $numFragments packets")
 
         fragmentedFrames++
 
         var payloadOffset = 1 // Skip NAL header
         var fragmentIndex = 0
 
-        while (payloadOffset < frameSize) {
+        while (payloadOffset < nalSize) {
             val isFirst = fragmentIndex == 0
-            val isLast = payloadOffset + MAX_FRAGMENT_PAYLOAD >= frameSize
-            val fragmentSize = minOf(MAX_FRAGMENT_PAYLOAD, frameSize - payloadOffset)
+            val isLast = payloadOffset + MAX_FRAGMENT_PAYLOAD >= nalSize
+            val fragmentSize = minOf(MAX_FRAGMENT_PAYLOAD, nalSize - payloadOffset)
 
             try {
                 var offset = 0
 
-                // RTP header (marker bit only on LAST fragment)
-                buildRtpHeader(packetBuffer, offset, isLast, rtpTimestamp)
+                // RTP header (marker bit only on LAST fragment of LAST NAL)
+                buildRtpHeader(packetBuffer, offset, isLast && isLastNal, rtpTimestamp)
                 offset += RTP_HEADER_SIZE
 
                 // H.264 FU-A header (2 bytes)
