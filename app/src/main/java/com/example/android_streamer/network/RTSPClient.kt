@@ -164,7 +164,7 @@ class RTSPClient(
     private fun sendSetup(): Boolean {
         val request = "SETUP rtsp://$serverIp:$serverPort$streamPath/track0 RTSP/1.0\r\n" +
                       "CSeq: ${cseq++}\r\n" +
-                      "Transport: RTP/AVP;unicast;client_port=$clientRtpPort-${clientRtpPort + 1}\r\n" +
+                      "Transport: RTP/AVP;unicast;client_port=$clientRtpPort-${clientRtpPort + 1};mode=record\r\n" +
                       "\r\n"
 
         val response = sendRequestAndGetResponse(request, "SETUP") ?: return false
