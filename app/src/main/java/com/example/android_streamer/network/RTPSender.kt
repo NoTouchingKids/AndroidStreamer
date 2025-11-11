@@ -50,7 +50,8 @@ class RTPSender(
     private val packet = DatagramPacket(packetBuffer, packetBuffer.size)
 
     // Temp buffer for frame copy (reused, pre-allocated)
-    private val frameBuffer = ByteArray(4 * 1024 * 1024) // 4MB max frame (handles 4K@60fps keyframes up to 4MB)
+    // 1MB handles 1080p@60fps keyframes (~300-500KB), ready to scale to 4MB for 4K
+    private val frameBuffer = ByteArray(1 * 1024 * 1024) // 1MB max frame
 
     // RTP state
     private var sequenceNumber: Int = 1

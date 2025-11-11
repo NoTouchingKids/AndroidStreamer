@@ -83,14 +83,14 @@ class H265Encoder(
             setInteger(MediaFormat.KEY_FRAME_RATE, frameRate)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1) // I-frame every 1 second
             setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain)
-            // Level 5.1 supports 4K@60fps (up to 8192x4320@30fps or 3840x2160@60fps)
+            // Level 5.1 supports 1080p@120fps and provides headroom for future 4K@60fps
             setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel51)
 
             // Low-latency optimizations
             setInteger(MediaFormat.KEY_PRIORITY, 0) // Realtime priority
             setInteger(MediaFormat.KEY_PREPEND_HEADER_TO_SYNC_FRAMES, 1) // Include SPS/PPS with keyframes
 
-            // Bitrate mode: CBR for predictable latency (100 Mbps for 4K@60fps quality)
+            // Bitrate mode: CBR for predictable latency (50 Mbps for 1080p@60fps high quality)
             setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
 
             // Quality tuning for complex frames (try to set complexity if supported)
