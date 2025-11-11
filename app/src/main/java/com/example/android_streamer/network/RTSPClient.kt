@@ -148,6 +148,12 @@ class RTSPClient(
     private fun sendAnnounce(): Boolean {
         val sdp = buildSDP()
 
+        Log.d(TAG, "=== SDP CONTENT ===")
+        sdp.lines().forEach { line ->
+            Log.d(TAG, "  $line")
+        }
+        Log.d(TAG, "===================")
+
         val request = "ANNOUNCE rtsp://$serverIp:$serverPort$streamPath RTSP/1.0\r\n" +
                       "CSeq: ${cseq++}\r\n" +
                       "Content-Type: application/sdp\r\n" +
