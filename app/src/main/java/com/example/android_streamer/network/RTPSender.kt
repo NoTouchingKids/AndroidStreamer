@@ -103,12 +103,13 @@ class RTPSender(
      */
     fun updateDestination(ip: String, port: Int) {
         try {
+            Log.i(TAG, "Updating RTP destination: $serverIp:$serverPort -> $ip:$port")
             this.serverIp = ip
             this.serverPort = port
             this.serverAddress = InetAddress.getByName(ip)
-            Log.i(TAG, "Updated RTP destination: $ip:$port")
+            Log.i(TAG, "✓ RTP destination updated: $ip:$port")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to update destination", e)
+            Log.e(TAG, "✗ Failed to update destination", e)
         }
     }
 
@@ -177,6 +178,11 @@ class RTPSender(
             packet.port = serverPort
             packet.length = offset + frameSize
             sock.send(packet)
+
+            // Log first packet for debugging
+            if (packetsSent == 0L) {
+                Log.i(TAG, "✓ FIRST PACKET SENT: ${addr.hostAddress}:$serverPort (${packet.length} bytes)")
+            }
 
             packetsSent++
             bytesSent += packet.length
@@ -248,6 +254,11 @@ class RTPSender(
                 packet.port = serverPort
                 packet.length = offset + fragmentSize
                 sock.send(packet)
+
+                // Log first fragment for debugging
+                if (packetsSent == 0L && fragmentIndex == 0) {
+                    Log.i(TAG, "✓ FIRST FRAGMENT SENT: ${addr.hostAddress}:$serverPort (${packet.length} bytes)")
+                }
 
                 packetsSent++
                 bytesSent += packet.length

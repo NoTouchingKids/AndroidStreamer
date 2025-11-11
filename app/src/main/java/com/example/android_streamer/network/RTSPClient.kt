@@ -169,24 +169,47 @@ class RTSPClient(
 
         val response = sendRequestAndGetResponse(request, "SETUP") ?: return false
 
+        // Log full SETUP response for debugging
+        Log.d(TAG, "=== SETUP Response ===")
+        response.lines().forEach { line ->
+            Log.d(TAG, "  $line")
+        }
+        Log.d(TAG, "======================")
+
         // Extract session ID
         val sessionMatch = Regex("Session: ([^;\r\n]+)").find(response)
         if (sessionMatch != null) {
             sessionId = sessionMatch.groupValues[1].trim()
-            Log.i(TAG, "Session ID: $sessionId")
-        }
-
-        // Extract server RTP port
-        val transportMatch = Regex("server_port=(\\d+)").find(response)
-        if (transportMatch != null) {
-            serverRtpPort = transportMatch.groupValues[1].toInt()
-            Log.i(TAG, "Server RTP port: $serverRtpPort")
+            Log.i(TAG, "✓ Session ID: $sessionId")
         } else {
-            // Default to client port if not specified
-            serverRtpPort = clientRtpPort
-            Log.w(TAG, "No server_port in response, using client port: $clientRtpPort")
+            Log.e(TAG, "✗ No Session ID in response!")
+            return false
         }
 
+        // Extract server RTP port from Transport header
+        // MediaMTX should return something like: Transport: RTP/AVP;unicast;client_port=5004-5005;server_port=8000-8001
+        val transportLine = response.lines().find { it.startsWith("Transport:", ignoreCase = true) }
+        Log.d(TAG, "Transport line: $transportLine")
+
+        if (transportLine != null) {
+            // Try multiple patterns for server_port
+            val serverPortMatch = Regex("server_port=(\\d+)").find(transportLine)
+            if (serverPortMatch != null) {
+                serverRtpPort = serverPortMatch.groupValues[1].toInt()
+                Log.i(TAG, "✓ Extracted server RTP port: $serverRtpPort")
+            } else {
+                Log.e(TAG, "✗ CRITICAL: No server_port in Transport header!")
+                Log.e(TAG, "  MediaMTX must specify where to send RTP packets")
+                Log.e(TAG, "  Transport: $transportLine")
+                // For publishing mode, this is a protocol error - we don't know where to send!
+                return false
+            }
+        } else {
+            Log.e(TAG, "✗ No Transport header in response!")
+            return false
+        }
+
+        Log.i(TAG, "✓ SETUP complete: client_port=$clientRtpPort -> server_port=$serverRtpPort")
         return true
     }
 
