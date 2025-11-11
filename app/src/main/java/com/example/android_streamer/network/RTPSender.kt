@@ -82,7 +82,9 @@ class RTPSender(
             // Bind to specific client port if specified (required for RTSP publishing)
             socket = if (clientPort > 0) {
                 Log.i(TAG, "Binding to client port $clientPort (as declared in RTSP SETUP)")
-                val sock = DatagramSocket(clientPort)
+                // Bind to IPv4 0.0.0.0:clientPort to avoid IPv6 binding
+                val bindAddress = InetAddress.getByName("0.0.0.0")
+                val sock = DatagramSocket(clientPort, bindAddress)
                 Log.i(TAG, "✓ Socket bound: local=${sock.localAddress.hostAddress}:${sock.localPort}")
                 sock
             } else {
