@@ -10,12 +10,12 @@ import java.net.InetSocketAddress
 import java.nio.ByteBuffer
 
 /**
- * RTP sender for H.264/AVC to MediaMTX server (LOCAL NETWORK ONLY).
+ * RTP sender for H.265/HEVC to MediaMTX server (LOCAL NETWORK ONLY).
  *
  * Zero-allocation design with automatic fragmentation:
  * - Pre-allocated packet buffer for single packets
  * - Automatic fragmentation for frames > MTU
- * - Proper H.264 FU-A (Fragmentation Unit) for large keyframes
+ * - Proper H.265 FU (Fragmentation Unit) for large keyframes
  * - Fire-and-forget UDP (no retries)
  *
  * MediaMTX Configuration:
@@ -43,7 +43,7 @@ class RTPSender(
     // Pre-allocated packet buffer (MTU-sized for fragmentation)
     private val MTU = 1400 // Conservative for local network
     private val RTP_HEADER_SIZE = 12
-    private val FU_HEADER_SIZE = 2 // H.264 FU-A header
+    private val FU_HEADER_SIZE = 3 // H.265 FU header (PayloadHdr + FU Header)
     private val MAX_FRAGMENT_PAYLOAD = MTU - RTP_HEADER_SIZE - FU_HEADER_SIZE
 
     private val packetBuffer = ByteArray(MTU)
@@ -58,7 +58,7 @@ class RTPSender(
 
     // RTP constants
     private val RTP_VERSION = 2
-    private val RTP_PAYLOAD_TYPE = 96 // H.264
+    private val RTP_PAYLOAD_TYPE = 96 // H.265
 
     // Stats
     @Volatile
@@ -129,9 +129,9 @@ class RTPSender(
     }
 
     /**
-     * Send H.264 frame to MediaMTX over RTP.
+     * Send H.265 frame to MediaMTX over RTP.
      *
-     * H.264 keyframes may contain multiple NAL units (SPS + PPS + IDR).
+     * H.265 keyframes may contain multiple NAL units (VPS + SPS + PPS + IDR).
      * This function parses start codes and sends each NAL unit separately.
      *
      * @param buffer MediaCodec output buffer (Annex B format with start codes)
@@ -190,7 +190,7 @@ class RTPSender(
     }
 
     /**
-     * Parse H.264 NAL units from Annex B format buffer.
+     * Parse H.265 NAL units from Annex B format buffer.
      * Returns list of NAL unit offsets and sizes.
      */
     private fun parseNalUnits(buffer: ByteArray, bufferSize: Int): List<NalUnit> {
@@ -293,7 +293,7 @@ class RTPSender(
     }
 
     /**
-     * Fragment large NAL unit into multiple RTP packets using H.264 FU-A.
+     * Fragment large NAL unit into multiple RTP packets using H.265 FU.
      *
      * Zero-allocation: reuses packet buffer for each fragment.
      */
@@ -304,20 +304,20 @@ class RTPSender(
         rtpTimestamp: Int,
         isLastNal: Boolean
     ) {
-        // H.264 NAL unit header is first byte
-        val nalHeader = frameBuffer[0]
-        val nalType = nalHeader.toInt() and 0x1F // Lower 5 bits
-        val nalNri = nalHeader.toInt() and 0x60  // NRI (bits 5-6)
+        // H.265 NAL unit header is first 2 bytes
+        val nalHeader1 = frameBuffer[0]
+        val nalHeader2 = frameBuffer[1]
+        val nalType = (nalHeader1.toInt() shr 1) and 0x3F // Bits 1-6
 
         // Calculate number of fragments
-        val nalPayloadSize = nalSize - 1 // Exclude NAL header
+        val nalPayloadSize = nalSize - 2 // Exclude 2-byte NAL header
         val numFragments = (nalPayloadSize + MAX_FRAGMENT_PAYLOAD - 1) / MAX_FRAGMENT_PAYLOAD
 
         Log.d(TAG, "Fragmenting NAL type $nalType: $nalSize bytes -> $numFragments packets")
 
         fragmentedFrames++
 
-        var payloadOffset = 1 // Skip NAL header
+        var payloadOffset = 2 // Skip 2-byte NAL header
         var fragmentIndex = 0
 
         while (payloadOffset < nalSize) {
@@ -332,11 +332,12 @@ class RTPSender(
                 buildRtpHeader(packetBuffer, offset, isLast && isLastNal, rtpTimestamp)
                 offset += RTP_HEADER_SIZE
 
-                // H.264 FU-A header (2 bytes)
-                // Byte 0: FU indicator (F=0, NRI=from original, Type=28 for FU-A)
-                packetBuffer[offset++] = (nalNri or 28).toByte() // Type = 28 (FU-A)
+                // H.265 FU header (3 bytes)
+                // Byte 0-1: PayloadHdr (type=49 for FU)
+                packetBuffer[offset++] = (49 shl 1).toByte() // Type = 49 (FU)
+                packetBuffer[offset++] = nalHeader2
 
-                // Byte 1: FU header (S, E, R, Type)
+                // Byte 2: FU header (S, E, R, FuType)
                 var fuHeader = nalType
                 if (isFirst) fuHeader = fuHeader or 0x80 // S bit (start)
                 if (isLast) fuHeader = fuHeader or 0x40  // E bit (end)
