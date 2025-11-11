@@ -106,13 +106,24 @@ class MainActivity : AppCompatActivity() {
         if (ENABLE_NETWORK_STREAMING) {
             // RTSP client mode: Android connects TO MediaMTX
             rtspClient = RTSPClient(MEDIAMTX_SERVER_IP, MEDIAMTX_RTSP_PORT, STREAM_PATH)
-            // Create RTPSender with client port from RTSP (must match SETUP declaration)
-            rtpSender = RTPSender(MEDIAMTX_SERVER_IP, RTP_PORT, rtspClient!!.getClientRtpPort())
+            // Create RTPSender with placeholder port (will be updated after RTSP SETUP)
+            // Don't start() it yet - wait for RTSP connection to complete
+            rtpSender = RTPSender(MEDIAMTX_SERVER_IP, 0, rtspClient!!.getClientRtpPort())
 
             // Set callback for when RTSP session is ready
             rtspClient?.onReadyToStream = { serverIp, serverPort ->
                 Log.i(TAG, "RTSP session established! Sending RTP to $serverIp:$serverPort")
                 rtpSender?.updateDestination(serverIp, serverPort)
+
+                // NOW start the RTP sender with correct destination
+                rtpSender?.let {
+                    try {
+                        it.start()
+                        Log.i(TAG, "RTP sender started with correct destination: $serverIp:$serverPort")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to start RTP sender", e)
+                    }
+                }
 
                 // Show connection status
                 runOnUiThread {
@@ -219,16 +230,8 @@ class MainActivity : AppCompatActivity() {
         encoderSurfaceReady = true
         Log.i(TAG, "Encoder initialized, surface ready")
 
-        // Start RTP sender if configured
-        rtpSender?.let {
-            try {
-                it.start()
-                Log.i(TAG, "RTP sender started")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to start RTP sender", e)
-                Toast.makeText(this, "Failed to start network sender: ${e.message}", Toast.LENGTH_LONG).show()
-            }
-        }
+        // NOTE: RTP sender is started AFTER RTSP connection completes (in onReadyToStream callback)
+        // This ensures we send to the correct server port from RTSP SETUP response
 
         // Update UI status
         val statusMsg = if (rtspClient != null) {
@@ -327,11 +330,21 @@ class MainActivity : AppCompatActivity() {
         // Reinitialize network components if enabled
         if (ENABLE_NETWORK_STREAMING) {
             rtspClient = RTSPClient(MEDIAMTX_SERVER_IP, MEDIAMTX_RTSP_PORT, STREAM_PATH)
-            rtpSender = RTPSender(MEDIAMTX_SERVER_IP, RTP_PORT, rtspClient!!.getClientRtpPort())
+            rtpSender = RTPSender(MEDIAMTX_SERVER_IP, 0, rtspClient!!.getClientRtpPort())
 
             rtspClient?.onReadyToStream = { serverIp, serverPort ->
                 Log.i(TAG, "RTSP reconnected! Sending RTP to $serverIp:$serverPort")
                 rtpSender?.updateDestination(serverIp, serverPort)
+
+                // Start RTP sender with correct destination
+                rtpSender?.let {
+                    try {
+                        it.start()
+                        Log.i(TAG, "RTP sender restarted with correct destination: $serverIp:$serverPort")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to restart RTP sender", e)
+                    }
+                }
 
                 runOnUiThread {
                     Toast.makeText(
