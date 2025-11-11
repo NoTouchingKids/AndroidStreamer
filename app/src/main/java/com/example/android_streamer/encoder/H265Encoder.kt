@@ -2,6 +2,7 @@ package com.example.android_streamer.encoder
 
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
+import android.media.MediaCodecList
 import android.media.MediaFormat
 import android.util.Log
 import android.view.Surface
@@ -71,6 +72,10 @@ class H265Encoder(
     fun start(): Surface {
         Log.i(TAG, "Starting H.265 encoder: ${width}x${height} @ ${frameRate}fps, ${bitrate / 1_000_000}Mbps")
 
+        // Find best hardware encoder
+        val codecName = findBestHEVCEncoder()
+        Log.i(TAG, "Selected codec: $codecName")
+
         // Configure MediaCodec
         val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_HEVC, width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
@@ -91,7 +96,7 @@ class H265Encoder(
             // Removed to avoid configure() errors on Samsung devices
         }
 
-        mediaCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_HEVC).apply {
+        mediaCodec = MediaCodec.createByCodecName(codecName).apply {
             setCallback(EncoderCallback(), null) // null = use codec's thread
             configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
             inputSurface = createInputSurface()
@@ -105,7 +110,7 @@ class H265Encoder(
             start()
         }
 
-        Log.i(TAG, "H.265 encoder initialized: ${width}x${height}@${frameRate}fps, ${bitrate / 1_000_000}Mbps")
+        Log.i(TAG, "H.265 encoder initialized: ${width}x${height}@${frameRate}fps, ${bitrate / 1_000_000}Mbps using $codecName")
         return inputSurface!!
     }
 
@@ -447,6 +452,47 @@ class H265Encoder(
         val sps: ByteArray,
         val pps: ByteArray
     )
+
+    /**
+     * Find the best available HEVC encoder.
+     * Prioritizes hardware encoders over software ones.
+     *
+     * Priority order:
+     * 1. OMX.Exynos.HEVC.Encoder (Samsung Exynos hardware)
+     * 2. Other hardware encoders (OMX.*, c2.*.hw.*)
+     * 3. Software encoders (c2.android.*, OMX.google.*)
+     */
+    private fun findBestHEVCEncoder(): String {
+        val codecList = MediaCodecList(MediaCodecList.ALL_CODECS)
+        val encoders = mutableListOf<Pair<String, Boolean>>() // <name, isHardware>
+
+        for (codecInfo in codecList.codecInfos) {
+            if (!codecInfo.isEncoder) continue
+
+            // Check if this codec supports HEVC
+            val types = codecInfo.supportedTypes
+            if (!types.contains(MediaFormat.MIMETYPE_VIDEO_HEVC)) continue
+
+            val name = codecInfo.name
+            val isHardware = !codecInfo.isSoftwareOnly
+
+            Log.d(TAG, "Found HEVC encoder: $name (HW=$isHardware)")
+            encoders.add(name to isHardware)
+        }
+
+        // Sort: hardware first, then prefer Exynos, then alphabetically
+        encoders.sortWith(compareBy(
+            { !(it.second) }, // Hardware first (false < true)
+            { !it.first.contains("Exynos", ignoreCase = true) }, // Exynos first
+            { it.first } // Alphabetical
+        ))
+
+        val selected = encoders.firstOrNull()?.first
+            ?: throw RuntimeException("No HEVC encoder found on this device!")
+
+        Log.i(TAG, "Available HEVC encoders: ${encoders.map { "${it.first} (HW=${it.second})" }}")
+        return selected
+    }
 
     companion object {
         private const val TAG = "H265Encoder"
