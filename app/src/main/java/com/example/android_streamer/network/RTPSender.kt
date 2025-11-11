@@ -166,10 +166,6 @@ class RTPSender(
             return
         }
 
-        if (isKeyFrame && nalUnits.size > 1) {
-            Log.d(TAG, "Keyframe contains ${nalUnits.size} NAL units")
-        }
-
         // Send each NAL unit
         for (i in nalUnits.indices) {
             val nal = nalUnits[i]
@@ -312,8 +308,6 @@ class RTPSender(
         // Calculate number of fragments
         val nalPayloadSize = nalSize - 2 // Exclude 2-byte NAL header
         val numFragments = (nalPayloadSize + MAX_FRAGMENT_PAYLOAD - 1) / MAX_FRAGMENT_PAYLOAD
-
-        Log.d(TAG, "Fragmenting NAL type $nalType: $nalSize bytes -> $numFragments packets")
 
         fragmentedFrames++
 

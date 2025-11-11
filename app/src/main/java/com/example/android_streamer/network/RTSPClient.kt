@@ -148,12 +148,6 @@ class RTSPClient(
     private fun sendAnnounce(): Boolean {
         val sdp = buildSDP()
 
-        Log.d(TAG, "=== SDP CONTENT ===")
-        sdp.lines().forEach { line ->
-            Log.d(TAG, "  $line")
-        }
-        Log.d(TAG, "===================")
-
         val request = "ANNOUNCE rtsp://$serverIp:$serverPort$streamPath RTSP/1.0\r\n" +
                       "CSeq: ${cseq++}\r\n" +
                       "Content-Type: application/sdp\r\n" +
@@ -174,18 +168,7 @@ class RTSPClient(
                       "Transport: RTP/AVP/UDP;unicast;client_port=$clientRtpPort-${clientRtpPort + 1};mode=record\r\n" +
                       "\r\n"
 
-        Log.d(TAG, "=== SETUP Request ===")
-        Log.d(TAG, "  Transport: RTP/AVP/UDP;unicast;client_port=$clientRtpPort-${clientRtpPort + 1};mode=record")
-        Log.d(TAG, "=====================")
-
         val response = sendRequestAndGetResponse(request, "SETUP") ?: return false
-
-        // Log full SETUP response for debugging
-        Log.d(TAG, "=== SETUP Response ===")
-        response.lines().forEach { line ->
-            Log.d(TAG, "  $line")
-        }
-        Log.d(TAG, "======================")
 
         // Extract session ID
         val sessionMatch = Regex("Session: ([^;\r\n]+)").find(response)
@@ -200,7 +183,6 @@ class RTSPClient(
         // Extract server RTP port from Transport header
         // MediaMTX should return something like: Transport: RTP/AVP;unicast;client_port=5004-5005;server_port=8000-8001
         val transportLine = response.lines().find { it.startsWith("Transport:", ignoreCase = true) }
-        Log.d(TAG, "Transport line: $transportLine")
 
         if (transportLine != null) {
             // Try multiple patterns for server_port

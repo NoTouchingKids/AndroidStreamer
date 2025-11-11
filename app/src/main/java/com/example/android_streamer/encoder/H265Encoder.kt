@@ -89,7 +89,7 @@ class H265Encoder(
             try {
                 setInteger(MediaFormat.KEY_LOW_LATENCY, 1) // Enable low-latency mode (Android 11+)
             } catch (e: Exception) {
-                Log.d(TAG, "KEY_LOW_LATENCY not supported (requires Android 11+)")
+                // Silently ignore if not supported
             }
 
             // Set operating rate to hint real-time encoding
@@ -99,22 +99,11 @@ class H265Encoder(
             setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
         }
 
-        Log.d(TAG, "Creating MediaCodec encoder...")
         mediaCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_HEVC).apply {
-            Log.d(TAG, "Setting callback...")
             setCallback(EncoderCallback(), null) // null = use codec's thread
-
-            Log.d(TAG, "Configuring encoder...")
             configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-
-            Log.d(TAG, "Creating input surface...")
             inputSurface = createInputSurface()
-            Log.i(TAG, "Input surface created: isValid=${inputSurface?.isValid}")
-
-            Log.d(TAG, "Starting MediaCodec...")
             start()
-            Log.i(TAG, "MediaCodec started successfully")
-            Log.i(TAG, "Codec data will be extracted when onOutputFormatChanged is called")
         }
 
         // Start consumer thread
@@ -124,7 +113,7 @@ class H265Encoder(
             start()
         }
 
-        Log.i(TAG, "H.265 encoder fully initialized. Surface valid: ${inputSurface?.isValid}")
+        Log.i(TAG, "H.265 encoder initialized: ${width}x${height}@${frameRate}fps, ${bitrate / 1_000_000}Mbps")
         return inputSurface!!
     }
 

@@ -268,9 +268,6 @@ class Camera2Controller(private val context: Context) {
                         frameNumber: Long
                     ) {
                         frameCount++
-                        if (frameCount % 60 == 0L) {
-                            Log.d(TAG, "Camera frames captured: $frameCount")
-                        }
                     }
 
                     override fun onCaptureFailed(
