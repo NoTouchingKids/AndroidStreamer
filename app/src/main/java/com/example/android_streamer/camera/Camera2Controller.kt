@@ -195,8 +195,15 @@ class Camera2Controller(private val context: Context) {
                 listOf(encoderSurface)
             }
 
-            camera.createCaptureSession(
-                surfaces,
+            // Use modern SessionConfiguration API (Android 9+)
+            val outputConfigurations = surfaces.map { surface ->
+                android.hardware.camera2.params.OutputConfiguration(surface)
+            }
+
+            val sessionConfig = android.hardware.camera2.params.SessionConfiguration(
+                android.hardware.camera2.params.SessionConfiguration.SESSION_REGULAR,
+                outputConfigurations,
+                java.util.concurrent.Executor { runnable -> cameraHandler.post(runnable) },
                 object : CameraCaptureSession.StateCallback() {
                     override fun onConfigured(session: CameraCaptureSession) {
                         Log.i(TAG, "Capture session configured successfully")
@@ -207,9 +214,10 @@ class Camera2Controller(private val context: Context) {
                     override fun onConfigureFailed(session: CameraCaptureSession) {
                         Log.e(TAG, "Capture session configuration FAILED")
                     }
-                },
-                cameraHandler
+                }
             )
+
+            camera.createCaptureSession(sessionConfig)
         } catch (e: CameraAccessException) {
             Log.e(TAG, "Failed to create capture session", e)
         } catch (e: IllegalArgumentException) {
