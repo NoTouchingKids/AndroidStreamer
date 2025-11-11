@@ -184,6 +184,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun initializeEncoder() {
+        // Create encoder and get input surface
+        encoderSurface = encoder.start()
+        encoderSurfaceReady = true
+        Log.i(TAG, "Encoder initialized, surface ready")
+
         // Start RTP sender if configured
         rtpSender?.let {
             try {
@@ -195,21 +200,26 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Connect RTSP client to MediaMTX
-        rtspClient?.let {
-            try {
-                it.connect()
-                Log.i(TAG, "RTSP client connecting to ${it.getServerUrl()}")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to connect RTSP client", e)
-                Toast.makeText(this, "Failed to connect to MediaMTX: ${e.message}", Toast.LENGTH_LONG).show()
+        // Get codec data (SPS/PPS) from encoder and set it in RTSP client
+        rtspClient?.let { client ->
+            val codecData = encoder.getCodecData()
+            if (codecData != null) {
+                Log.i(TAG, "Setting codec data in RTSP client: SPS=${codecData.sps.size}B, PPS=${codecData.pps.size}B")
+                client.setStreamParameters(targetWidth, targetHeight, targetFps, codecData.sps, codecData.pps)
+
+                // Now connect RTSP client to MediaMTX
+                try {
+                    client.connect()
+                    Log.i(TAG, "RTSP client connecting to ${client.getServerUrl()}")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to connect RTSP client", e)
+                    Toast.makeText(this, "Failed to connect to MediaMTX: ${e.message}", Toast.LENGTH_LONG).show()
+                }
+            } else {
+                Log.w(TAG, "Codec data not available from encoder, RTSP connection may fail")
+                Toast.makeText(this, "Warning: Codec data not available", Toast.LENGTH_SHORT).show()
             }
         }
-
-        // Create encoder and get input surface
-        encoderSurface = encoder.start()
-        encoderSurfaceReady = true
-        Log.i(TAG, "Encoder initialized, surface ready")
 
         // Update UI status
         val statusMsg = if (rtspClient != null) {

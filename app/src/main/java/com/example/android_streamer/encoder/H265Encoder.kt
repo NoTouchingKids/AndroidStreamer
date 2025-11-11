@@ -55,6 +55,11 @@ class H265Encoder(
     @Volatile
     private var keyFrames = 0L
 
+    // Codec-specific data (SPS/PPS for H.265)
+    private var spsData: ByteArray? = null
+    private var ppsData: ByteArray? = null
+    private var vpsData: ByteArray? = null
+
     /**
      * Start the encoder and consumer thread.
      *
@@ -93,6 +98,23 @@ class H265Encoder(
             Log.d(TAG, "Starting MediaCodec...")
             start()
             Log.i(TAG, "MediaCodec started successfully")
+
+            // Extract codec-specific data (SPS/PPS/VPS) for RTSP
+            try {
+                val outputFormat = outputFormat
+                vpsData = outputFormat.getByteBuffer("csd-0")?.let { buffer ->
+                    ByteArray(buffer.remaining()).also { buffer.get(it) }
+                }
+                spsData = outputFormat.getByteBuffer("csd-1")?.let { buffer ->
+                    ByteArray(buffer.remaining()).also { buffer.get(it) }
+                }
+                ppsData = outputFormat.getByteBuffer("csd-2")?.let { buffer ->
+                    ByteArray(buffer.remaining()).also { buffer.get(it) }
+                }
+                Log.i(TAG, "Extracted codec data: VPS=${vpsData?.size ?: 0}B, SPS=${spsData?.size ?: 0}B, PPS=${ppsData?.size ?: 0}B")
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not extract codec-specific data from output format", e)
+            }
         }
 
         // Start consumer thread
@@ -136,6 +158,19 @@ class H265Encoder(
             keyFrames = keyFrames,
             ringOccupancy = ring.size()
         )
+    }
+
+    /**
+     * Get codec-specific data (SPS/PPS/VPS) for RTSP.
+     *
+     * @return Codec data if available, null otherwise
+     */
+    fun getCodecData(): CodecData? {
+        return if (spsData != null && ppsData != null) {
+            CodecData(vps = vpsData, sps = spsData!!, pps = ppsData!!)
+        } else {
+            null
+        }
     }
 
     /**
@@ -300,6 +335,12 @@ class H265Encoder(
         val droppedFrames: Long,
         val keyFrames: Long,
         val ringOccupancy: Int
+    )
+
+    data class CodecData(
+        val vps: ByteArray?,
+        val sps: ByteArray,
+        val pps: ByteArray
     )
 
     companion object {
