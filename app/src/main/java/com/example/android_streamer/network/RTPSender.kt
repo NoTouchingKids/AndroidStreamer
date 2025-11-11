@@ -80,21 +80,23 @@ class RTPSender(
         Log.i(TAG, "Starting RTP sender to MediaMTX at $serverIp:$serverPort (with fragmentation)")
 
         try {
-            serverAddress = InetAddress.getByName(serverIp)
+            // Force IPv4 resolution for server address
+            serverAddress = Inet4Address.getByName(serverIp) as Inet4Address
+            Log.i(TAG, "Server address resolved to IPv4: ${serverAddress?.hostAddress}")
+
             // Bind to specific client port if specified (required for RTSP publishing)
             socket = if (clientPort > 0) {
                 Log.i(TAG, "Binding to client port $clientPort (as declared in RTSP SETUP)")
                 // Force IPv4 binding to avoid IPv6 issues with MediaMTX
-                val sock = DatagramSocket(null) // Create unbound socket
+                val ipv4Wildcard = Inet4Address.getByName("0.0.0.0") as Inet4Address
+                val bindAddress = InetSocketAddress(ipv4Wildcard, clientPort)
+                val sock = DatagramSocket(bindAddress)
                 sock.reuseAddress = true
-                // Explicitly bind to IPv4 wildcard address
-                val ipv4Address = InetSocketAddress(Inet4Address.getByName("0.0.0.0"), clientPort)
-                sock.bind(ipv4Address)
-                Log.i(TAG, "✓ Socket bound: local=${sock.localAddress.hostAddress}:${sock.localPort}")
+                Log.i(TAG, "✓ Socket bound to IPv4: ${sock.localAddress}:${sock.localPort}")
                 sock
             } else {
                 val sock = DatagramSocket()
-                Log.i(TAG, "✓ Socket bound: local=${sock.localAddress.hostAddress}:${sock.localPort}")
+                Log.i(TAG, "✓ Socket bound: ${sock.localAddress}:${sock.localPort}")
                 sock
             }
 
@@ -103,7 +105,7 @@ class RTPSender(
             socket?.trafficClass = 0x10 // IPTOS_LOWDELAY
 
             Log.i(TAG, "✓ RTP sender ready: SSRC=0x${ssrc.toString(16)}, MTU=$MTU")
-            Log.i(TAG, "✓ Will send: ${socket?.localAddress?.hostAddress}:${socket?.localPort} -> ${serverAddress?.hostAddress}:$serverPort")
+            Log.i(TAG, "✓ Will send: ${socket?.localSocketAddress} -> ${serverAddress?.hostAddress}:$serverPort")
         } catch (e: Exception) {
             Log.e(TAG, "✗ Failed to start RTP sender", e)
             throw e
@@ -118,8 +120,9 @@ class RTPSender(
             Log.i(TAG, "Updating RTP destination: $serverIp:$serverPort -> $ip:$port")
             this.serverIp = ip
             this.serverPort = port
-            this.serverAddress = InetAddress.getByName(ip)
-            Log.i(TAG, "✓ RTP destination updated: $ip:$port")
+            // Force IPv4 resolution
+            this.serverAddress = Inet4Address.getByName(ip) as Inet4Address
+            Log.i(TAG, "✓ RTP destination updated: ${serverAddress?.hostAddress}:$port (IPv4)")
         } catch (e: Exception) {
             Log.e(TAG, "✗ Failed to update destination", e)
         }
