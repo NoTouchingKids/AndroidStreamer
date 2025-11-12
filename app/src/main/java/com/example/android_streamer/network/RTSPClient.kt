@@ -362,14 +362,15 @@ class RTSPClient(
         val spsParam = sps ?: ""
         val ppsParam = pps ?: ""
 
-        // H.265 requires VPS, SPS, and PPS in sprop-parameter-sets or as individual params
-        // RFC 7798 specifies sprop-vps, sprop-sps, sprop-pps for H.265
-        val fmtpLine = if (vpsParam.isNotEmpty()) {
-            "a=fmtp:96 sprop-vps=$vpsParam;sprop-sps=$spsParam;sprop-pps=$ppsParam\r\n"
-        } else {
-            // Fallback if VPS not available (some encoders may not provide it)
-            "a=fmtp:96 sprop-sps=$spsParam;sprop-pps=$ppsParam\r\n"
-        }
+        // H.265 parameter sets in SDP
+        // TEMPORARY TEST: Omit VPS from SDP, rely on in-band VPS (prepended to keyframes)
+        // MediaMTX may not parse sprop-vps correctly, causing RPS errors
+        val fmtpLine = "a=fmtp:96 sprop-sps=$spsParam;sprop-pps=$ppsParam\r\n"
+
+        // TODO: If this fixes RPS error, the issue is MediaMTX SDP parsing
+        // Alternative formats to try:
+        // - sprop-parameter-sets=$vpsParam,$spsParam,$ppsParam (comma-separated)
+        // - Omit all from SDP (in-band only)
 
         return "v=0\r\n" +
                "o=- 0 0 IN IP4 127.0.0.1\r\n" +
