@@ -196,14 +196,10 @@ class Camera2Controller(private val context: Context) {
             }
 
             // Use modern SessionConfiguration API (Android 9+)
-            // Configure with increased buffer depth for high-throughput streaming
+            // Note: Camera2 surface buffer count is managed by MediaCodec consumer
+            // MediaCodec allocates buffers based on operating rate hint (set in encoder)
             val outputConfigurations = surfaces.map { surface ->
-                android.hardware.camera2.params.OutputConfiguration(surface).apply {
-                    // Increase shared buffer count from default (2-3) to 8
-                    // Provides 133ms of buffering @ 60fps, prevents drops during GC/CPU spikes
-                    // Memory: 8 × 8 MB = 64 MB for 1080p YUV (well within 3GB budget)
-                    setMaxSharedSurfaceCount(8)
-                }
+                android.hardware.camera2.params.OutputConfiguration(surface)
             }
 
             val sessionConfig = android.hardware.camera2.params.SessionConfiguration(
