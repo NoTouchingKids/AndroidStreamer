@@ -244,8 +244,8 @@ class MainActivity : AppCompatActivity() {
 
             // Now we can set stream parameters and connect RTSP client
             rtspClient?.let { client ->
-                Log.i(TAG, "Setting codec data in RTSP client: SPS=${sps.size}B, PPS=${pps.size}B")
-                client.setStreamParameters(targetWidth, targetHeight, targetFps, sps, pps)
+                Log.i(TAG, "Setting codec data in RTSP client: VPS=${vps?.size ?: 0}B, SPS=${sps.size}B, PPS=${pps.size}B")
+                client.setStreamParameters(targetWidth, targetHeight, targetFps, vps, sps, pps)
 
                 // Connect RTSP client to MediaMTX
                 try {

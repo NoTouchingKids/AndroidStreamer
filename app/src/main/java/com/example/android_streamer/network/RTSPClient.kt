@@ -57,6 +57,7 @@ class RTSPClient(
     private var width: Int = 1920
     private var height: Int = 1080
     private var fps: Int = 30
+    private var vps: String? = null // H.265 Video Parameter Set
     private var sps: String? = null
     private var pps: String? = null
 
@@ -81,14 +82,16 @@ class RTSPClient(
     /**
      * Set stream parameters (must call before connect).
      */
-    fun setStreamParameters(width: Int, height: Int, fps: Int, sps: ByteArray?, pps: ByteArray?) {
+    fun setStreamParameters(width: Int, height: Int, fps: Int, vps: ByteArray?, sps: ByteArray?, pps: ByteArray?) {
         this.width = width
         this.height = height
         this.fps = fps
+        this.vps = vps?.toBase64()
         this.sps = sps?.toBase64()
         this.pps = pps?.toBase64()
 
-        Log.i(TAG, "Stream parameters set: ${width}x${height}@${fps}fps")
+        val vpsSize = vps?.size ?: 0
+        Log.i(TAG, "Stream parameters set: ${width}x${height}@${fps}fps, VPS=${vpsSize}B, SPS=${sps?.size ?: 0}B, PPS=${pps?.size ?: 0}B")
     }
 
     /**
@@ -355,10 +358,19 @@ class RTSPClient(
      * Build SDP for H.265 stream.
      */
     private fun buildSDP(): String {
+        val vpsParam = vps ?: ""
         val spsParam = sps ?: ""
         val ppsParam = pps ?: ""
 
-        // H.265 uses sprop-sps and sprop-pps as separate parameters
+        // H.265 requires VPS, SPS, and PPS in sprop-parameter-sets or as individual params
+        // RFC 7798 specifies sprop-vps, sprop-sps, sprop-pps for H.265
+        val fmtpLine = if (vpsParam.isNotEmpty()) {
+            "a=fmtp:96 sprop-vps=$vpsParam;sprop-sps=$spsParam;sprop-pps=$ppsParam\r\n"
+        } else {
+            // Fallback if VPS not available (some encoders may not provide it)
+            "a=fmtp:96 sprop-sps=$spsParam;sprop-pps=$ppsParam\r\n"
+        }
+
         return "v=0\r\n" +
                "o=- 0 0 IN IP4 127.0.0.1\r\n" +
                "s=Android H.265 Stream\r\n" +
@@ -369,7 +381,7 @@ class RTSPClient(
                "a=control:*\r\n" +
                "m=video $clientRtpPort RTP/AVP 96\r\n" +
                "a=rtpmap:96 H265/90000\r\n" +
-               "a=fmtp:96 sprop-sps=$spsParam;sprop-pps=$ppsParam\r\n" +
+               fmtpLine +
                "a=control:track0\r\n"
     }
 
