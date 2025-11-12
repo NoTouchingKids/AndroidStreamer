@@ -343,6 +343,55 @@ class Camera2Controller(private val context: Context) {
     }
 
     /**
+     * Scan for vendor-specific extensions and capabilities.
+     * Samsung often exposes 60fps/120fps through vendor keys not visible in standard API.
+     */
+    private fun scanVendorExtensions(cameraId: String, characteristics: CameraCharacteristics) {
+        Log.i(TAG, "  Vendor Extensions Scan:")
+
+        try {
+            // Get all available keys (includes vendor extensions)
+            val availableKeys = characteristics.keys
+
+            // Look for Samsung-specific keys (they usually start with com.samsung)
+            val samsungKeys = availableKeys.filter { it.name.contains("samsung", ignoreCase = true) }
+            if (samsungKeys.isNotEmpty()) {
+                Log.i(TAG, "    Found ${samsungKeys.size} Samsung-specific keys:")
+                samsungKeys.take(10).forEach { key ->
+                    try {
+                        val value = characteristics.get(key)
+                        Log.i(TAG, "      ${key.name} = $value")
+                    } catch (e: Exception) {
+                        Log.i(TAG, "      ${key.name} (can't read value)")
+                    }
+                }
+                if (samsungKeys.size > 10) {
+                    Log.i(TAG, "      ... and ${samsungKeys.size - 10} more")
+                }
+            } else {
+                Log.i(TAG, "    No Samsung-specific keys found")
+            }
+
+            // Check for request keys that might enable higher FPS
+            val availableRequestKeys = characteristics.availableCaptureRequestKeys
+            val fpsRelatedKeys = availableRequestKeys.filter {
+                it.name.contains("fps", ignoreCase = true) ||
+                it.name.contains("frame", ignoreCase = true) ||
+                it.name.contains("video", ignoreCase = true)
+            }
+            if (fpsRelatedKeys.isNotEmpty()) {
+                Log.i(TAG, "    FPS-related request keys found:")
+                fpsRelatedKeys.forEach { key ->
+                    Log.i(TAG, "      ${key.name}")
+                }
+            }
+
+        } catch (e: Exception) {
+            Log.w(TAG, "    Error scanning vendor extensions: ${e.message}")
+        }
+    }
+
+    /**
      * Scan all resolutions and report their maximum FPS based on min frame duration.
      * This gives us the complete picture of what the device can actually do.
      */
@@ -479,6 +528,9 @@ class Camera2Controller(private val context: Context) {
                 Log.i(TAG, "  Capabilities: 1080p=$has1080p, 60fps=$has60fps, 120fps=$has120fps")
                 Log.i(TAG, "  → 1080p@60fps: $supports1080p60")
                 Log.i(TAG, "  → 1080p@120fps: $supports1080p120")
+
+                // Scan for vendor-specific extensions (Samsung often hides capabilities here)
+                scanVendorExtensions(id, characteristics)
 
                 // Scan actual FPS capabilities for this camera
                 scanAllResolutionCapabilities(id)
