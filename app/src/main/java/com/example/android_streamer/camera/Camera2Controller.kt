@@ -307,6 +307,52 @@ class Camera2Controller(private val context: Context) {
     }
 
     /**
+     * Scan all resolutions and report their maximum FPS based on min frame duration.
+     * This gives us the complete picture of what the device can actually do.
+     */
+    private fun scanAllResolutionCapabilities(cameraId: String) {
+        val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+        val configMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return
+
+        val sizes = configMap.getOutputSizes(android.graphics.ImageFormat.PRIVATE) ?: return
+
+        // Common resolutions to check
+        val resolutionsToCheck = listOf(
+            Size(3840, 2160), // 4K
+            Size(1920, 1080), // 1080p
+            Size(1280, 720),  // 720p
+            Size(640, 480)    // VGA
+        )
+
+        Log.i(TAG, "========================================")
+        Log.i(TAG, "COMPREHENSIVE FPS CAPABILITY SCAN")
+        Log.i(TAG, "========================================")
+
+        resolutionsToCheck.forEach { targetSize ->
+            if (sizes.contains(targetSize)) {
+                val minFrameDuration = configMap.getOutputMinFrameDuration(
+                    android.graphics.ImageFormat.PRIVATE,
+                    targetSize
+                )
+
+                if (minFrameDuration != null && minFrameDuration > 0) {
+                    val maxFps = (1_000_000_000.0 / minFrameDuration).toInt()
+                    val durationMs = minFrameDuration / 1_000_000.0
+                    Log.i(TAG, "${targetSize.width}x${targetSize.height}:")
+                    Log.i(TAG, "  Min frame duration: ${minFrameDuration}ns (${String.format("%.2f", durationMs)}ms)")
+                    Log.i(TAG, "  → Max FPS: ${maxFps}fps")
+                } else {
+                    Log.i(TAG, "${targetSize.width}x${targetSize.height}: No min frame duration available")
+                }
+            } else {
+                Log.i(TAG, "${targetSize.width}x${targetSize.height}: NOT SUPPORTED")
+            }
+        }
+
+        Log.i(TAG, "========================================")
+    }
+
+    /**
      * Find best back camera ID for high-resolution/high-FPS streaming.
      *
      * On multi-camera devices (e.g., Samsung Note 10+), there may be multiple back cameras:
@@ -397,6 +443,9 @@ class Camera2Controller(private val context: Context) {
                 Log.i(TAG, "  Capabilities: 1080p=$has1080p, 60fps=$has60fps, 120fps=$has120fps")
                 Log.i(TAG, "  → 1080p@60fps: $supports1080p60")
                 Log.i(TAG, "  → 1080p@120fps: $supports1080p120")
+
+                // Scan actual FPS capabilities for this camera
+                scanAllResolutionCapabilities(id)
 
                 backCameras.add(CameraInfo(id, maxResolution, supports1080p60, supports1080p120, hardwareLevel))
             } else {
