@@ -144,11 +144,24 @@ class MainActivity : AppCompatActivity() {
             ).show()
         }
 
-        // Initialize encoder with detected FPS
+        // Calculate adaptive bitrate based on FPS
+        // 1080p@30fps: 50 Mbps baseline
+        // 1080p@60fps: 90 Mbps (1.8x, accounting for temporal redundancy)
+        // 1080p@120fps: 150 Mbps (3x)
+        val baseBitrate = 50_000_000 // 50 Mbps for 1080p@30fps
+        val adaptiveBitrate = when {
+            targetFps >= 120 -> (baseBitrate * 3.0).toInt() // 150 Mbps for 120fps
+            targetFps >= 60 -> (baseBitrate * 1.8).toInt()  // 90 Mbps for 60fps
+            else -> baseBitrate // 50 Mbps for 30fps
+        }
+
+        Log.i(TAG, "Adaptive bitrate for ${targetFps}fps: ${adaptiveBitrate / 1_000_000} Mbps")
+
+        // Initialize encoder with detected FPS and adaptive bitrate
         encoder = H265Encoder(
             width = targetWidth,
             height = targetHeight,
-            bitrate = 50_000_000, // 50 Mbps for 1080p@60fps high quality (complex scenes)
+            bitrate = adaptiveBitrate,
             frameRate = targetFps,
             rtpSender = rtpSender
         )
@@ -357,11 +370,16 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Reinitialize encoder for next session
+        // Reinitialize encoder for next session with adaptive bitrate
+        val restartBitrate = when {
+            targetFps >= 120 -> 150_000_000 // 150 Mbps for 120fps
+            targetFps >= 60 -> 90_000_000   // 90 Mbps for 60fps
+            else -> 50_000_000 // 50 Mbps for 30fps
+        }
         encoder = H265Encoder(
             width = targetWidth,
             height = targetHeight,
-            bitrate = 50_000_000, // 50 Mbps for 1080p@60fps high quality (complex scenes)
+            bitrate = restartBitrate,
             frameRate = targetFps,  // Use detected FPS (60 or 120fps)
             rtpSender = rtpSender
         )
