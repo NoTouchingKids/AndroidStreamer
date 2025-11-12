@@ -240,6 +240,42 @@ class Camera2Controller(private val context: Context) {
         fps: Int
     ) {
         try {
+            // Get supported FPS ranges from camera
+            val characteristics = cameraManager.getCameraCharacteristics(camera.id)
+            val supportedFpsRanges = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+                ?: arrayOf(Range(30, 30))
+
+            // Find the best FPS range to use:
+            // 1. Prefer variable range that includes target FPS (e.g., [15,60] for 60fps)
+            // 2. Fall back to fixed range equal to target (e.g., [60,60])
+            // 3. Fall back to max available variable range (e.g., [15,30])
+            // 4. Fall back to max fixed range (e.g., [30,30])
+
+            val targetRange = Range(fps, fps)
+            val fpsRange = when {
+                // Check if exact fixed range is supported (e.g., [60,60])
+                supportedFpsRanges.contains(targetRange) -> {
+                    Log.i(TAG, "Using exact FPS range: [${fps}, ${fps}]")
+                    targetRange
+                }
+                // Find variable range that reaches target FPS (e.g., [15,60] or [30,60])
+                else -> {
+                    val variableRange = supportedFpsRanges
+                        .filter { it.lower < it.upper && it.upper >= fps }
+                        .maxByOrNull { it.upper }
+
+                    if (variableRange != null) {
+                        Log.i(TAG, "Using variable FPS range targeting ${fps}fps: [${variableRange.lower}, ${variableRange.upper}]")
+                        variableRange
+                    } else {
+                        // Fall back to max available range
+                        val maxRange = supportedFpsRanges.maxByOrNull { it.upper } ?: Range(30, 30)
+                        Log.w(TAG, "Target ${fps}fps not supported, using best available: [${maxRange.lower}, ${maxRange.upper}]")
+                        maxRange
+                    }
+                }
+            }
+
             // Create capture request targeting encoder (and optionally preview)
             val requestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
                 // Always add encoder surface
@@ -253,18 +289,7 @@ class Camera2Controller(private val context: Context) {
                 // Configure for low-latency, high frame rate
                 set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                 set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-
-                // Use variable FPS range for better compatibility
-                // Samsung devices often fail with fixed ranges like Range(60,60)
-                // Variable range allows camera to adapt to lighting conditions
-                val fpsRange = if (fps >= 60) {
-                    Range(30, fps) // e.g., Range(30, 60) - targets 60fps but allows drop to 30fps
-                } else {
-                    Range(fps, fps) // For 30fps and below, fixed range is fine
-                }
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
-                Log.i(TAG, "Using FPS range: [${fpsRange.lower}, ${fpsRange.upper}]")
-
                 set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
 
                 // Disable video stabilization for lowest latency
