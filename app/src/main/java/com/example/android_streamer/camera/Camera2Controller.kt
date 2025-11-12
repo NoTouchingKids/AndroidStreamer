@@ -253,7 +253,18 @@ class Camera2Controller(private val context: Context) {
                 // Configure for low-latency, high frame rate
                 set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                 set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-                set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(fps, fps))
+
+                // Use variable FPS range for better compatibility
+                // Samsung devices often fail with fixed ranges like Range(60,60)
+                // Variable range allows camera to adapt to lighting conditions
+                val fpsRange = if (fps >= 60) {
+                    Range(30, fps) // e.g., Range(30, 60) - targets 60fps but allows drop to 30fps
+                } else {
+                    Range(fps, fps) // For 30fps and below, fixed range is fine
+                }
+                set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
+                Log.i(TAG, "Using FPS range: [${fpsRange.lower}, ${fpsRange.upper}]")
+
                 set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
 
                 // Disable video stabilization for lowest latency
