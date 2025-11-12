@@ -63,14 +63,13 @@ class RTPSender(
     private val RTP_PAYLOAD_TYPE = 96 // H.265
 
     // Packet pacing for burst control at 60fps@135Mbps
-    // Prevents UDP buffer overflow while maintaining real-time throughput
+    // TEMPORARY: Disabled for testing (set to 0)
+    // ffplay is not receiving frames - testing if pacing is causing MediaMTX forwarding delay
+    // If this fixes it: need to find optimal pacing value or disable for local network
     //
-    // Math: GOP = 120 frames in 2000ms, total 33.75 MB, ~25,000 packets
-    //       50µs/packet = 1250ms to send entire GOP (62.5% of available time)
-    //       Provides safety margin while preventing instant keyframe bursts
-    //
-    // 50µs spreads 2MB keyframe over ~75ms instead of instant flood
-    private val PACKET_PACING_MICROS = 50L // 50 microseconds between packets
+    // Original: 50µs (spreads 2MB keyframe over 75ms)
+    // Testing: 0µs (instant send, rely on 16MB UDP buffer + MediaMTX buffers)
+    private val PACKET_PACING_MICROS = 0L // 0 = no pacing (TESTING)
 
     // Stats
     @Volatile
