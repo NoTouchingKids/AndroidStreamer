@@ -101,9 +101,22 @@ class RTPSender(
                 sock
             }
 
-            // Optimize for local network
-            socket?.sendBufferSize = 512 * 1024 // 512KB for burst traffic
-            socket?.trafficClass = 0x10 // IPTOS_LOWDELAY
+            // Optimize for high-bitrate local network streaming
+            // At 180 Mbps (ULTRA @ 60fps), we generate ~22.5 MB/sec
+            // Need large buffers to handle keyframe bursts (1-2 MB)
+            // Default Android UDP buffer: ~200 KB (too small!)
+            //
+            // Buffer sizing:
+            //   8 MB = 350ms @ 180 Mbps (handles multiple keyframes)
+            //  16 MB = 700ms @ 180 Mbps (safer for WiFi jitter)
+            socket?.sendBufferSize = 16 * 1024 * 1024 // 16MB for high bitrate
+            socket?.trafficClass = 0x10 // IPTOS_LOWDELAY for real-time traffic
+
+            val actualSendBuffer = socket?.sendBufferSize ?: 0
+            Log.i(TAG, "✓ Socket buffer sizes: send=${actualSendBuffer / 1024}KB")
+            if (actualSendBuffer < 8 * 1024 * 1024) {
+                Log.w(TAG, "⚠ Send buffer smaller than requested (OS limit), may cause packet loss at high bitrates")
+            }
 
             Log.i(TAG, "✓ RTP sender ready: SSRC=0x${ssrc.toString(16)}, MTU=$MTU")
             Log.i(TAG, "✓ Will send: ${socket?.localSocketAddress} -> ${serverAddress?.hostAddress}:$serverPort")
