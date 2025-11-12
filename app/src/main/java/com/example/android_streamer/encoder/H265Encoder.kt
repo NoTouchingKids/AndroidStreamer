@@ -83,7 +83,7 @@ class H265Encoder(
         Log.i(TAG, "  Resolution: ${width}x${height}")
         Log.i(TAG, "  Frame rate: ${frameRate} fps")
         Log.i(TAG, "  Bitrate: ${bitrate / 1_000_000} Mbps")
-        Log.i(TAG, "  I-frame interval: 0.5s")
+        Log.i(TAG, "  I-frame interval: 2.0s (optimized for high bitrate)")
         Log.i(TAG, "========================================")
 
         // Configure MediaCodec
@@ -91,9 +91,15 @@ class H265Encoder(
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
             setInteger(MediaFormat.KEY_FRAME_RATE, frameRate)
-            // I-frame interval: 0.5s for low latency (max 500ms decode startup, faster recovery from packet loss)
-            // Tradeoff: ~10-15% bitrate increase vs 50% latency reduction
-            setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, 0.5f) // I-frame every 500ms
+
+            // I-frame interval: 2.0s (was 0.5s)
+            // At high bitrates (135+ Mbps), keyframes create massive UDP bursts that overwhelm buffers
+            // 2.0s interval reduces burst frequency by 4x while maintaining reasonable:
+            //   - Startup latency: 2s max (acceptable for streaming)
+            //   - Error recovery: Within 2s of packet loss
+            //   - Seek time: 2s granularity (fine for live streaming)
+            // Tradeoff: 2s vs 500ms startup latency, but eliminates packet loss
+            setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, 2.0f) // I-frame every 2 seconds
             setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain)
             // Level 5.1 supports 1080p@120fps and provides headroom for future 4K@60fps
             setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel51)
