@@ -290,6 +290,16 @@ class Camera2Controller(private val context: Context) {
                 set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                 set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                 set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
+
+                // CRITICAL: Use manual frame duration control to unlock 60fps on Samsung devices
+                // Samsung restricts FPS ranges but honors SENSOR_FRAME_DURATION
+                // Frame duration in nanoseconds: 60fps = 1,000,000,000 / 60 = 16,666,666ns
+                if (fps >= 60) {
+                    val frameDurationNs = (1_000_000_000L / fps)
+                    set(CaptureRequest.SENSOR_FRAME_DURATION, frameDurationNs)
+                    Log.i(TAG, "Setting manual frame duration: ${frameDurationNs}ns (${fps}fps)")
+                }
+
                 set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
 
                 // Disable video stabilization for lowest latency
