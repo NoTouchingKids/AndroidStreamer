@@ -493,12 +493,30 @@ class Camera2Controller(private val context: Context) {
             Log.i(TAG, "  [${range.lower}, ${range.upper}]")
         }
 
+        // Check minimum frame duration for target resolution (more accurate!)
+        val configMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+        val targetSize = Size(width, height)
+        val minFrameDuration = configMap?.getOutputMinFrameDuration(
+            android.graphics.ImageFormat.PRIVATE,
+            targetSize
+        )
+
+        var maxFpsFromDuration: Int? = null
+        if (minFrameDuration != null && minFrameDuration > 0) {
+            // minFrameDuration is in nanoseconds
+            // maxFPS = 1,000,000,000 / minFrameDuration
+            maxFpsFromDuration = (1_000_000_000.0 / minFrameDuration).toInt()
+            Log.i(TAG, "Min frame duration for ${width}x${height}: ${minFrameDuration}ns")
+            Log.i(TAG, "  → Calculated max FPS from duration: ${maxFpsFromDuration}fps")
+        } else {
+            Log.w(TAG, "Could not get min frame duration for ${width}x${height}")
+        }
+
         // Collect all FPS ranges (regular + high-speed)
         val allFpsRanges = mutableListOf<Range<Int>>()
         allFpsRanges.addAll(fpsRanges)
 
         // Check for high-speed video configurations (often where 60fps/120fps live)
-        val configMap = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
         val highSpeedSizes = configMap?.highSpeedVideoSizes
 
         if (highSpeedSizes != null && highSpeedSizes.isNotEmpty()) {
@@ -529,26 +547,28 @@ class Camera2Controller(private val context: Context) {
         Log.i(TAG, "  Fixed FPS ranges: ${fixedFpsRanges.map { "[${it.lower},${it.upper}]" }}")
         Log.i(TAG, "  Max fixed FPS: $maxFixedFps")
         Log.i(TAG, "  Max variable FPS: $maxVariableFps")
+        Log.i(TAG, "  Max FPS from duration: $maxFpsFromDuration")
 
         // Priority selection for best FPS:
-        // 1. If 120fps available (fixed or variable) → use 120
-        // 2. If 60fps available (fixed or variable) → use 60
+        // 1. If 120fps available (from ranges OR duration) → use 120
+        // 2. If 60fps available (from ranges OR duration) → use 60
         // 3. Otherwise use max available FPS
 
         val selectedFps = when {
-            // Check for 120fps support (fixed or variable range)
-            allFpsRanges.any { it.upper >= 120 } -> {
+            // Check for 120fps support (ranges or duration)
+            allFpsRanges.any { it.upper >= 120 } || (maxFpsFromDuration != null && maxFpsFromDuration >= 120) -> {
                 Log.i(TAG, "  ✓ 120fps supported!")
                 120
             }
-            // Check for 60fps support (fixed or variable range)
-            allFpsRanges.any { it.upper >= 60 } -> {
+            // Check for 60fps support (ranges or duration)
+            allFpsRanges.any { it.upper >= 60 } || (maxFpsFromDuration != null && maxFpsFromDuration >= 60) -> {
                 Log.i(TAG, "  ✓ 60fps supported!")
                 60
             }
-            // Fall back to maximum available
+            // Fall back to maximum available from any source
             else -> {
-                val fps = maxFixedFps ?: maxVariableFps
+                val fpsFromRanges = maxFixedFps ?: maxVariableFps
+                val fps = maxOf(fpsFromRanges, maxFpsFromDuration ?: 0)
                 Log.i(TAG, "  Using max available FPS: $fps")
                 fps
             }
