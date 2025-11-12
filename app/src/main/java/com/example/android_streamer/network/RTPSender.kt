@@ -61,12 +61,15 @@ class RTPSender(
     private val RTP_VERSION = 2
     private val RTP_PAYLOAD_TYPE = 96 // H.265
 
-    // Packet pacing for burst control
-    // Small delay between packets to prevent buffer overflow
-    // At 135 Mbps with 1400 byte packets = 82µs per packet (ideal)
-    // We use 100µs (10,000 packets/sec = 140 Mbps max) to stay just above bitrate
-    // This spreads keyframe bursts over time instead of instant flood
-    private val PACKET_PACING_MICROS = 100L // 100 microseconds between packets
+    // Packet pacing for burst control at 60fps@135Mbps
+    // Prevents UDP buffer overflow while maintaining real-time throughput
+    //
+    // Math: GOP = 120 frames in 2000ms, total 33.75 MB, ~25,000 packets
+    //       50µs/packet = 1250ms to send entire GOP (62.5% of available time)
+    //       Provides safety margin while preventing instant keyframe bursts
+    //
+    // 50µs spreads 2MB keyframe over ~75ms instead of instant flood
+    private val PACKET_PACING_MICROS = 50L // 50 microseconds between packets
 
     // Stats
     @Volatile
