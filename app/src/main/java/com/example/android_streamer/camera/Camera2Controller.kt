@@ -459,17 +459,29 @@ class Camera2Controller(private val context: Context) {
             return null
         }
 
-        // Select best camera: prioritize 1080p@60fps support, then resolution
+        // Select best camera: prioritize FPS support, then hardware level, then resolution
+        // Hardware levels: LEVEL_3 (3) > FULL (1) > LIMITED (0) > LEGACY (-1)
+        // For video streaming, FULL hardware level is crucial for performance
         val selectedCamera = backCameras
-            .sortedWith(compareByDescending<CameraInfo> { it.supports1080p60 }
-                .thenByDescending { it.supports1080p120 }
+            .sortedWith(compareByDescending<CameraInfo> { it.supports1080p120 }
+                .thenByDescending { it.supports1080p60 }
+                .thenByDescending { it.hardwareLevel } // Prioritize FULL over LIMITED!
                 .thenByDescending { it.maxResolution }
                 .thenBy { it.id.toIntOrNull() ?: Int.MAX_VALUE })
             .first()
 
+        val levelStr = when (selectedCamera.hardwareLevel) {
+            CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY -> "LEGACY"
+            CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED -> "LIMITED"
+            CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_FULL -> "FULL"
+            CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL_3 -> "LEVEL_3"
+            else -> "UNKNOWN"
+        }
+
         Log.i(TAG, "========================================")
         Log.i(TAG, "✓ SELECTED: Camera ${selectedCamera.id}")
         Log.i(TAG, "  ${selectedCamera.maxResolution/1_000_000}MP")
+        Log.i(TAG, "  Hardware level: $levelStr")
         Log.i(TAG, "  1080p@60fps: ${selectedCamera.supports1080p60}")
         Log.i(TAG, "  1080p@120fps: ${selectedCamera.supports1080p120}")
         Log.i(TAG, "========================================")
