@@ -81,6 +81,25 @@ class MainActivity : AppCompatActivity() {
 
         // RTP port for data (client side)
         private const val RTP_PORT = 5004
+
+        /**
+         * Quality presets for different network capabilities and use cases
+         *
+         * BALANCED: Good quality, moderate bandwidth (WiFi 5 / Gigabit Ethernet)
+         * HIGH: Excellent quality, high bandwidth (WiFi 6 / 2.5G Ethernet)
+         * ULTRA: Maximum quality, very high bandwidth (WiFi 6E / 10G Ethernet)
+         * EFFICIENCY: Lower bandwidth, optimized compression (slower WiFi / remote streaming)
+         */
+        enum class QualityPreset(val bitrateMultiplier: Double, val description: String) {
+            EFFICIENCY(0.6, "Optimized for bandwidth efficiency"),
+            BALANCED(1.0, "Balanced quality/bandwidth"),
+            HIGH(1.5, "High quality, higher bandwidth"),
+            ULTRA(2.0, "Maximum quality, maximum bandwidth")
+        }
+
+        // Select your quality preset here (change based on your network)
+        // WiFi 6 @ 1.2 Gbps → Use HIGH or ULTRA
+        private val QUALITY_PRESET = QualityPreset.HIGH
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -144,17 +163,27 @@ class MainActivity : AppCompatActivity() {
             ).show()
         }
 
-        // Calculate adaptive bitrate based on FPS
-        // 1080p@30fps: 50 Mbps baseline
-        // 1080p@60fps: 90 Mbps (1.8x, accounting for temporal redundancy)
-        // 1080p@120fps: 150 Mbps (3x)
-        val baseBitrate = 50_000_000 // 50 Mbps for 1080p@30fps
-        val adaptiveBitrate = when {
-            targetFps >= 120 -> (baseBitrate * 3.0).toInt() // 150 Mbps for 120fps
-            targetFps >= 60 -> (baseBitrate * 1.8).toInt()  // 90 Mbps for 60fps
-            else -> baseBitrate // 50 Mbps for 30fps
+        // Calculate adaptive bitrate based on FPS and quality preset
+        // Base bitrates for BALANCED preset (1.0x):
+        //   1080p@30fps: 50 Mbps
+        //   1080p@60fps: 90 Mbps (1.8x, accounting for temporal redundancy)
+        //   1080p@120fps: 150 Mbps (3x)
+        // Then multiply by quality preset multiplier:
+        //   EFFICIENCY (0.6x): 30/54/90 Mbps
+        //   BALANCED (1.0x): 50/90/150 Mbps
+        //   HIGH (1.5x): 75/135/225 Mbps ← WiFi 6 recommended
+        //   ULTRA (2.0x): 100/180/300 Mbps ← Max quality
+
+        val baseBitrate = 50_000_000 // 50 Mbps for 1080p@30fps (BALANCED)
+        val fpsMultiplier = when {
+            targetFps >= 120 -> 3.0  // 120fps
+            targetFps >= 60 -> 1.8   // 60fps
+            else -> 1.0              // 30fps
         }
 
+        val adaptiveBitrate = (baseBitrate * fpsMultiplier * QUALITY_PRESET.bitrateMultiplier).toInt()
+
+        Log.i(TAG, "Quality preset: ${QUALITY_PRESET.name} (${QUALITY_PRESET.description})")
         Log.i(TAG, "Adaptive bitrate for ${targetFps}fps: ${adaptiveBitrate / 1_000_000} Mbps")
 
         // Initialize encoder with detected FPS and adaptive bitrate
@@ -370,12 +399,15 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Reinitialize encoder for next session with adaptive bitrate
-        val restartBitrate = when {
-            targetFps >= 120 -> 150_000_000 // 150 Mbps for 120fps
-            targetFps >= 60 -> 90_000_000   // 90 Mbps for 60fps
-            else -> 50_000_000 // 50 Mbps for 30fps
+        // Reinitialize encoder for next session with adaptive bitrate and quality preset
+        val baseBitrateRestart = 50_000_000
+        val fpsMultiplierRestart = when {
+            targetFps >= 120 -> 3.0
+            targetFps >= 60 -> 1.8
+            else -> 1.0
         }
+        val restartBitrate = (baseBitrateRestart * fpsMultiplierRestart * QUALITY_PRESET.bitrateMultiplier).toInt()
+
         encoder = H265Encoder(
             width = targetWidth,
             height = targetHeight,
