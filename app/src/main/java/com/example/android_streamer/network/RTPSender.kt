@@ -153,8 +153,8 @@ class RTPSender(
         if (!enqueued) {
             // Queue full - drop frame (should be rare with 32-frame buffer)
             Log.w(TAG, "Send queue full (${sendQueue.size}), dropped frame (${frameSize} bytes)")
-        } else if (packetsSent < 1200 || totalTimeUs > 2000) {  // Log first 20 frames OR if >2ms
-            Log.d(TAG, "Enqueued: ${frameSize}b, copy=${copyTimeUs}µs, enqueue=${enqueueTimeUs}µs, total=${totalTimeUs}µs, queue=${queueSizeBefore}→${sendQueue.size}")
+        } else if (packetsSent < 1200 || totalTimeUs > 2000 || queueSizeBefore > 5) {  // Log if queue backing up
+            Log.d(TAG, "Enqueued: ${frameSize}b, copy=${copyTimeUs}µs, total=${totalTimeUs}µs, queue=${queueSizeBefore}→${sendQueue.size}")
         }
     }
 
