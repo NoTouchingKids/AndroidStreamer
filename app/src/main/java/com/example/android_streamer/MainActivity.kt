@@ -31,6 +31,7 @@ class MainActivity : AppCompatActivity() {
     private val targetWidth = 1920
     private val targetHeight = 1080
     private var targetFps = 60
+    private var targetBitrate = 50_000_000  // Default 50 Mbps
 
     companion object {
         private const val TAG = "AndroidStreamer"
@@ -66,16 +67,26 @@ class MainActivity : AppCompatActivity() {
         rtspClient?.onReadyToStream = { serverIp, serverPort ->
             // Update destination when RTSP negotiation completes
             rtpSender?.updateDestination(serverIp, serverPort)
-            runOnUiThread { updateStatus("Streaming") }
+            runOnUiThread { updateStatus("Streaming to $serverIp:$serverPort") }
         }
 
         encoder = H265Encoder(
             width = targetWidth,
             height = targetHeight,
-            bitrate = 75_000_000,  // Increased from 50 Mbps for better quality
+            bitrate = targetBitrate,
             frameRate = targetFps,
             rtpSender = rtpSender
         )
+
+        // Bitrate control
+        binding.seekBarBitrate.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
+                targetBitrate = progress * 1_000_000  // Convert Mbps to bps
+                binding.tvBitrate.text = "Bitrate: $progress Mbps"
+            }
+            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
+        })
 
         binding.btnStart.setOnClickListener { startCapture() }
         binding.btnStop.setOnClickListener { stopCapture() }
@@ -97,13 +108,17 @@ class MainActivity : AppCompatActivity() {
                     client.connect()
                 } catch (e: Exception) {
                     Log.e(TAG, "RTSP connect failed", e)
+                    runOnUiThread {
+                        updateStatus("Connection failed")
+                        android.widget.Toast.makeText(this@MainActivity, "Failed to connect to server", android.widget.Toast.LENGTH_SHORT).show()
+                    }
                 }
             }
         }
 
         encoderSurface = encoder.start()
         encoderSurfaceReady = true
-        updateStatus("Ready")
+        updateStatus("Ready to stream")
     }
 
     private fun startCapture() {
@@ -129,7 +144,8 @@ class MainActivity : AppCompatActivity() {
         isCapturing = true
         binding.btnStart.isEnabled = false
         binding.btnStop.isEnabled = true
-        updateStatus("Capturing")
+        binding.seekBarBitrate.isEnabled = false
+        updateStatus("Connecting to server...")
     }
 
     private fun stopCapture() {
@@ -159,7 +175,7 @@ class MainActivity : AppCompatActivity() {
         rtspClient?.onReadyToStream = { serverIp, serverPort ->
             // Update destination when RTSP negotiation completes
             rtpSender?.updateDestination(serverIp, serverPort)
-            runOnUiThread { updateStatus("Streaming") }
+            runOnUiThread { updateStatus("Streaming to $serverIp:$serverPort") }
         }
 
         encoder = H265Encoder(
@@ -173,7 +189,8 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnStart.isEnabled = true
         binding.btnStop.isEnabled = false
-        updateStatus("Ready")
+        binding.seekBarBitrate.isEnabled = true
+        updateStatus("Stopped")
     }
 
     private fun updateStatus(status: String) {

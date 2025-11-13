@@ -78,6 +78,26 @@
             android:textColor="#FFD93D"
             android:textSize="14sp"
             android:fontFamily="monospace" />
+
+        <TextView
+            android:id="@+id/tvBitrate"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Bitrate: 50 Mbps"
+            android:textColor="#74C0FC"
+            android:textSize="14sp"
+            android:fontFamily="monospace"
+            android:textStyle="bold" />
+
+        <SeekBar
+            android:id="@+id/seekBarBitrate"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:min="20"
+            android:max="57"
+            android:progress="50" />
     </LinearLayout>
 
     <!-- Control Buttons -->
