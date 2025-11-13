@@ -211,7 +211,7 @@ class RTPSender(
 
             val nalSize = nalEnd - nalStart
             if (nalSize > 0) {
-                nalOffsets[nalCount] = startPosition + nalStart
+                nalOffsets[nalCount] = nalStart  // Relative offset (not absolute)
                 nalSizes[nalCount] = nalSize
                 nalCount++
             }
