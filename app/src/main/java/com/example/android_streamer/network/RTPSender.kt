@@ -42,7 +42,7 @@ class RTPSender(
 
     // Dedicated sender thread for parallel packet transmission
     private data class ParsedFrame(
-        val buffer: ByteBuffer,  // Reference to MediaCodec buffer (read-only after parsing)
+        val frameData: ByteArray,  // Copied frame data (safe to use after MediaCodec release)
         val nalOffsets: IntArray,
         val nalSizes: IntArray,
         val nalCount: Int,
@@ -121,12 +121,19 @@ class RTPSender(
             return
         }
 
+        // Copy frame data (must copy before MediaCodec buffer is released)
+        val frameSize = buffer.remaining()
+        val frameDataCopy = ByteArray(frameSize)
+        val savedPos = buffer.position()
+        buffer.get(frameDataCopy)
+        buffer.position(savedPos)
+
         // Copy NAL metadata (arrays will be reused on next frame)
         val offsetsCopy = nalOffsets.copyOf(nalCount)
         val sizesCopy = nalSizes.copyOf(nalCount)
 
         // Enqueue for async sending (non-blocking)
-        val parsed = ParsedFrame(buffer, offsetsCopy, sizesCopy, nalCount, rtpTimestamp)
+        val parsed = ParsedFrame(frameDataCopy, offsetsCopy, sizesCopy, nalCount, rtpTimestamp)
 
         if (!sendQueue.offer(parsed)) {
             // Queue full - drop frame (should be rare)
@@ -219,7 +226,7 @@ class RTPSender(
     private fun sendSinglePacket(
         sock: DatagramSocket,
         addr: InetAddress,
-        buffer: ByteBuffer,
+        frameData: ByteArray,
         nalOffset: Int,
         nalSize: Int,
         rtpTimestamp: Int,
@@ -231,10 +238,8 @@ class RTPSender(
             buildRtpHeader(packetBuffer, offset, markerBit, rtpTimestamp)
             offset += RTP_HEADER_SIZE
 
-            // Read NAL unit using duplicate to avoid position manipulation overhead
-            val slice = buffer.duplicate()
-            slice.position(nalOffset)
-            slice.get(packetBuffer, offset, nalSize)
+            // Copy NAL unit from frame data
+            System.arraycopy(frameData, nalOffset, packetBuffer, offset, nalSize)
 
             packet.address = addr
             packet.port = serverPort
@@ -253,20 +258,17 @@ class RTPSender(
     private fun sendFragmentedNal(
         sock: DatagramSocket,
         addr: InetAddress,
-        buffer: ByteBuffer,
+        frameData: ByteArray,
         nalOffset: Int,
         nalSize: Int,
         rtpTimestamp: Int,
         isLastNal: Boolean
     ) {
-        val nalHeader1 = buffer.get(nalOffset)
-        val nalHeader2 = buffer.get(nalOffset + 1)
+        val nalHeader1 = frameData[nalOffset]
+        val nalHeader2 = frameData[nalOffset + 1]
         val nalType = (nalHeader1.toInt() shr 1) and 0x3F
 
         fragmentedFrames++
-
-        // Create duplicate once for all fragments (avoids repeated position manipulation)
-        val slice = buffer.duplicate()
 
         var payloadOffset = 2
         var fragmentIndex = 0
@@ -291,9 +293,8 @@ class RTPSender(
                 if (isLast) fuHeader = fuHeader or 0x40
                 packetBuffer[offset++] = fuHeader.toByte()
 
-                // Read fragment using duplicate (no position manipulation overhead)
-                slice.position(nalOffset + payloadOffset)
-                slice.get(packetBuffer, offset, fragmentSize)
+                // Copy fragment from frame data
+                System.arraycopy(frameData, nalOffset + payloadOffset, packetBuffer, offset, fragmentSize)
 
                 packet.address = addr
                 packet.port = serverPort
@@ -363,9 +364,9 @@ class RTPSender(
                         val nalSize = parsed.nalSizes[i]
 
                         if (nalSize <= MTU - RTP_HEADER_SIZE) {
-                            sendSinglePacket(sock, addr, parsed.buffer, nalOffset, nalSize, parsed.rtpTimestamp, isLastNal)
+                            sendSinglePacket(sock, addr, parsed.frameData, nalOffset, nalSize, parsed.rtpTimestamp, isLastNal)
                         } else {
-                            sendFragmentedNal(sock, addr, parsed.buffer, nalOffset, nalSize, parsed.rtpTimestamp, isLastNal)
+                            sendFragmentedNal(sock, addr, parsed.frameData, nalOffset, nalSize, parsed.rtpTimestamp, isLastNal)
                         }
                     }
                 } catch (e: InterruptedException) {
