@@ -59,7 +59,7 @@ class H265Encoder(
             setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
 
             try {
-                setInteger(MediaFormat.KEY_COMPLEXITY, 1)
+                setInteger(MediaFormat.KEY_COMPLEXITY, 2)  // Increased from 1 for better quality
             } catch (e: Exception) {
                 // Not supported on all devices
             }

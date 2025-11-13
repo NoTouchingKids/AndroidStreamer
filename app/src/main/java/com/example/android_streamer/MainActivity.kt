@@ -68,7 +68,7 @@ class MainActivity : AppCompatActivity() {
         encoder = H265Encoder(
             width = targetWidth,
             height = targetHeight,
-            bitrate = 50_000_000,
+            bitrate = 75_000_000,  // Increased from 50 Mbps for better quality
             frameRate = targetFps,
             rtpSender = rtpSender
         )
@@ -156,7 +156,7 @@ class MainActivity : AppCompatActivity() {
         encoder = H265Encoder(
             width = targetWidth,
             height = targetHeight,
-            bitrate = 50_000_000,
+            bitrate = 75_000_000,  // Increased from 50 Mbps for better quality
             frameRate = targetFps,
             rtpSender = rtpSender
         )
