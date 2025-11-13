@@ -131,30 +131,18 @@ class RTPSender(
     }
 
     fun sendFrame(buffer: ByteBuffer, timestampUs: Long, isKeyFrame: Boolean) {
-        val frameStartTime = System.nanoTime()
         val rtpTimestamp = (timestampUs * 90 / 1000).toInt()
-
-        // Copy frame data ONLY on caller thread (EncoderSender) - parsing moved to sender thread
-        val copyStart = System.nanoTime()
         val frameSize = buffer.remaining()
+
+        // Copy frame data for async processing
         val frameDataCopy = ByteArray(frameSize)
         buffer.get(frameDataCopy)
-        val copyTimeUs = (System.nanoTime() - copyStart) / 1000  // Microseconds for precision
 
-        // Enqueue raw frame for async parsing and sending (non-blocking)
-        val enqueueStart = System.nanoTime()
+        // Enqueue raw frame for sender thread
         val rawFrame = RawFrame(frameDataCopy, rtpTimestamp, isKeyFrame)
-        val queueSizeBefore = sendQueue.size
-        val enqueued = sendQueue.offer(rawFrame)
-        val enqueueTimeUs = (System.nanoTime() - enqueueStart) / 1000
 
-        val totalTimeUs = (System.nanoTime() - frameStartTime) / 1000
-
-        if (!enqueued) {
-            // Queue full - drop frame (should be rare with 32-frame buffer)
-            Log.w(TAG, "Send queue full (${sendQueue.size}), dropped frame (${frameSize} bytes)")
-        } else if (packetsSent < 1200 || totalTimeUs > 2000 || queueSizeBefore > 5) {  // Log if queue backing up
-            Log.d(TAG, "Enqueued: ${frameSize}b, copy=${copyTimeUs}µs, total=${totalTimeUs}µs, queue=${queueSizeBefore}→${sendQueue.size}")
+        if (!sendQueue.offer(rawFrame)) {
+            Log.w(TAG, "Send queue full, dropped frame (${frameSize} bytes)")
         }
     }
 
@@ -356,71 +344,34 @@ class RTPSender(
      */
     private inner class SenderRunnable : Runnable {
         override fun run() {
-            Log.i(TAG, "Sender thread started, senderRunning=${senderRunning.get()}")
+            Log.i(TAG, "Sender thread started")
             var framesSent = 0
-            var pollAttempts = 0
 
             while (senderRunning.get() || !sendQueue.isEmpty()) {
                 var rawFrame: RawFrame? = null
                 try {
-                    pollAttempts++
-                    if (pollAttempts <= 5) {
-                        Log.d(TAG, "Poll attempt $pollAttempts, queue size=${sendQueue.size}, socket=$socket, serverAddress=$serverAddress")
-                    }
-
-                    // Wait for raw frame (blocking with timeout)
+                    // Wait for raw frame
                     rawFrame = sendQueue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
-                    if (rawFrame == null) {
-                        // Log every 50 empty polls to detect if we're waiting
-                        if (pollAttempts % 50 == 1) {
-                            Log.d(TAG, "Sender waiting, queue empty (poll attempt $pollAttempts, sent $framesSent frames so far)")
-                        }
-                        continue
-                    }
+                    if (rawFrame == null) continue
 
-                    Log.d(TAG, "Got frame from queue! size=${rawFrame.frameData.size}, checking destination ready...")
-
-                    // Wait for RTSP negotiation to complete and provide valid destination
+                    // Wait for RTSP negotiation to complete
                     if (!destinationReady.get()) {
-                        if (pollAttempts % 50 == 1) {
-                            Log.d(TAG, "Destination not ready yet, waiting for RTSP negotiation (queued ${sendQueue.size} frames)")
-                        }
-                        // Put frame back in queue and wait
                         sendQueue.offer(rawFrame)
-                        Thread.sleep(50)  // Wait for RTSP
+                        Thread.sleep(50)
                         continue
                     }
 
-                    val sock = socket
-                    if (sock == null) {
-                        Log.e(TAG, "Socket is null! Breaking out of sender loop")
-                        break
-                    }
+                    val sock = socket ?: break
+                    val addr = serverAddress ?: break
 
-                    val addr = serverAddress
-                    if (addr == null) {
-                        Log.e(TAG, "ServerAddress is null! Breaking out of sender loop")
-                        break
-                    }
-
-                    Log.d(TAG, "Dequeued frame ${framesSent + 1}, size=${rawFrame.frameData.size}, queue=${sendQueue.size}")
-
-                    val startTime = System.nanoTime()
-                    val packetsBefore = packetsSent
-
-                    // Parse NAL units on sender thread (keeps EncoderSender fast)
-                    val parseStart = System.nanoTime()
+                    // Parse NAL units
                     parseNalUnits(rawFrame.frameData)
-                    val parseTime = (System.nanoTime() - parseStart) / 1_000_000
-
-                    Log.d(TAG, "Parsed frame ${framesSent + 1}: ${nalCount} NALs in ${parseTime}ms")
-
                     if (nalCount == 0) {
                         Log.w(TAG, "Frame has no NAL units, skipping")
                         continue
                     }
 
-                    // Send all NAL units for this frame
+                    // Send all NAL units
                     for (i in 0 until nalCount) {
                         val isLastNal = (i == nalCount - 1)
                         val nalOffset = nalOffsets[i]
@@ -434,10 +385,6 @@ class RTPSender(
                     }
 
                     framesSent++
-                    val totalTimeMs = (System.nanoTime() - startTime) / 1_000_000
-                    val packetsThisFrame = packetsSent - packetsBefore
-
-                    Log.d(TAG, "Sent frame $framesSent: ${rawFrame.frameData.size}b, parse=${parseTime}ms, total=${totalTimeMs}ms, ${packetsThisFrame}pkts, queue=${sendQueue.size}, errors=$sendErrors")
                 } catch (e: InterruptedException) {
                     Log.i(TAG, "Sender thread interrupted, shutting down gracefully")
                     break
@@ -485,18 +432,12 @@ class RTPSender(
             senderThread = null
 
             // Clear queue
-            val droppedFrames = sendQueue.size
             sendQueue.clear()
-            if (droppedFrames > 0) {
-                Log.i(TAG, "Cleared $droppedFrames queued frames")
-            }
 
             // Close socket
             socket?.close()
             socket = null
             serverAddress = null
-
-            Log.i(TAG, "Cleanup complete")
         } catch (e: Exception) {
             Log.e(TAG, "Error during cleanup", e)
         }
