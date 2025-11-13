@@ -28,10 +28,10 @@ class MainActivity : AppCompatActivity() {
     private var encoderSurface: android.view.Surface? = null
     private var isCapturing = false
 
-    private val targetWidth = 1920
-    private val targetHeight = 1080
+    private val targetWidth = 3840
+    private val targetHeight = 2160
     private var targetFps = 60
-    private var targetBitrate = 50_000_000  // Default 50 Mbps
+    private var targetBitrate = 150_000_000  // Default 150 Mbps for 4k60
 
     companion object {
         private const val TAG = "AndroidStreamer"
@@ -194,7 +194,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateStatus(status: String) {
-        runOnUiThread { binding.tvStatus.text = "Status: $status" }
+        runOnUiThread { binding.tvStatus.text = "Status: $status (4K60)" }
     }
 
     private fun startStatsUpdater() {
