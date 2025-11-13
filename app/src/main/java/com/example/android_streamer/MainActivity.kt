@@ -55,11 +55,11 @@ class MainActivity : AppCompatActivity() {
 
         // Start RTP sender thread immediately so it's ready when frames arrive
         rtpSender?.let {
-            try {
-                it.start()
-                Log.i(TAG, "RTP sender started successfully")
-            } catch (e: Exception) {
-                Log.e(TAG, "RTP start failed", e)
+            if (!it.start()) {
+                Log.e(TAG, "Failed to start RTP sender, streaming will not work")
+                runOnUiThread {
+                    android.widget.Toast.makeText(this, "Failed to start RTP sender", android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
         }
 
@@ -147,11 +147,12 @@ class MainActivity : AppCompatActivity() {
 
         // Start RTP sender thread immediately so it's ready when frames arrive
         rtpSender?.let {
-            try {
-                it.start()
-                Log.i(TAG, "RTP sender restarted successfully")
-            } catch (e: Exception) {
-                Log.e(TAG, "RTP restart failed", e)
+            if (!it.start()) {
+                Log.e(TAG, "Failed to restart RTP sender")
+                runOnUiThread {
+                    android.widget.Toast.makeText(this, "Failed to restart RTP sender", android.widget.Toast.LENGTH_SHORT).show()
+                    updateStatus("RTP sender failed")
+                }
             }
         }
 

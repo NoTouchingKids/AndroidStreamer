@@ -74,8 +74,15 @@ class RTPSender(
     var sendErrors = 0L
         private set
 
-    fun start() {
-        try {
+    fun start(): Boolean {
+        return try {
+            // Check if already started
+            if (senderRunning.get()) {
+                Log.w(TAG, "RTP sender already started, ignoring")
+                return true
+            }
+
+            Log.i(TAG, "Starting RTP sender...")
             serverAddress = Inet4Address.getByName(serverIp) as Inet4Address
 
             socket = if (clientPort > 0) {
@@ -92,19 +99,22 @@ class RTPSender(
             socket?.trafficClass = 0x10
 
             // Start dedicated sender thread
-            Log.i(TAG, "Starting sender thread setup...")
             senderRunning.set(true)
-            Log.i(TAG, "senderRunning set to true")
             senderThread = Thread(SenderRunnable(), "RTP-Sender").apply {
-                Log.i(TAG, "Thread object created, setting priority and starting...")
                 priority = Thread.MAX_PRIORITY
+                uncaughtExceptionHandler = Thread.UncaughtExceptionHandler { thread, throwable ->
+                    Log.e(TAG, "Sender thread crashed: ${throwable.message}", throwable)
+                    cleanup()
+                }
                 start()
-                Log.i(TAG, "Thread.start() called")
             }
-            Log.i(TAG, "RTP sender thread started successfully, thread=$senderThread")
+
+            Log.i(TAG, "RTP sender started successfully")
+            true
         } catch (e: Exception) {
-            Log.e(TAG, "RTP start failed", e)
-            throw e
+            Log.e(TAG, "Failed to start RTP sender", e)
+            cleanup()
+            false
         }
     }
 
@@ -351,6 +361,7 @@ class RTPSender(
             var pollAttempts = 0
 
             while (senderRunning.get() || !sendQueue.isEmpty()) {
+                var rawFrame: RawFrame? = null
                 try {
                     pollAttempts++
                     if (pollAttempts <= 5) {
@@ -358,7 +369,7 @@ class RTPSender(
                     }
 
                     // Wait for raw frame (blocking with timeout)
-                    val rawFrame = sendQueue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    rawFrame = sendQueue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
                     if (rawFrame == null) {
                         // Log every 50 empty polls to detect if we're waiting
                         if (pollAttempts % 50 == 1) {
@@ -428,10 +439,11 @@ class RTPSender(
 
                     Log.d(TAG, "Sent frame $framesSent: ${rawFrame.frameData.size}b, parse=${parseTime}ms, total=${totalTimeMs}ms, ${packetsThisFrame}pkts, queue=${sendQueue.size}, errors=$sendErrors")
                 } catch (e: InterruptedException) {
-                    Log.i(TAG, "Sender thread interrupted")
+                    Log.i(TAG, "Sender thread interrupted, shutting down gracefully")
                     break
                 } catch (e: Exception) {
-                    Log.e(TAG, "Sender thread error", e)
+                    Log.e(TAG, "Error processing frame ${framesSent + 1}, skipping frame and continuing", e)
+                    // Continue processing next frame - don't crash the entire sender thread
                 }
             }
 
@@ -440,18 +452,54 @@ class RTPSender(
     }
 
     fun stop() {
-        // Stop sender thread
-        senderRunning.set(false)
-        senderThread?.interrupt()
-        senderThread?.join(1000)
-        senderThread = null
+        Log.i(TAG, "Stopping RTP sender...")
+        cleanup()
+        Log.i(TAG, "RTP sender stopped")
+    }
 
-        // Clear queue
-        sendQueue.clear()
+    private fun cleanup() {
+        try {
+            // Signal thread to stop
+            senderRunning.set(false)
+            destinationReady.set(false)
 
-        socket?.close()
-        socket = null
-        serverAddress = null
+            // Interrupt and wait for thread
+            senderThread?.let { thread ->
+                if (thread.isAlive) {
+                    thread.interrupt()
+                    val joined = try {
+                        thread.join(2000)
+                        true
+                    } catch (e: InterruptedException) {
+                        Log.w(TAG, "Interrupted while waiting for sender thread to stop")
+                        false
+                    }
+
+                    if (!joined && thread.isAlive) {
+                        Log.w(TAG, "Sender thread did not stop within timeout, forcing...")
+                        @Suppress("DEPRECATION")
+                        thread.stop()
+                    }
+                }
+            }
+            senderThread = null
+
+            // Clear queue
+            val droppedFrames = sendQueue.size
+            sendQueue.clear()
+            if (droppedFrames > 0) {
+                Log.i(TAG, "Cleared $droppedFrames queued frames")
+            }
+
+            // Close socket
+            socket?.close()
+            socket = null
+            serverAddress = null
+
+            Log.i(TAG, "Cleanup complete")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error during cleanup", e)
+        }
     }
 
     companion object {
