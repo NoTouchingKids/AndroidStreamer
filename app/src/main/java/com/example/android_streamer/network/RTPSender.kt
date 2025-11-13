@@ -337,23 +337,40 @@ class RTPSender(
      */
     private inner class SenderRunnable : Runnable {
         override fun run() {
-            Log.i(TAG, "Sender thread started")
+            Log.i(TAG, "Sender thread started, senderRunning=${senderRunning.get()}")
             var framesSent = 0
+            var pollAttempts = 0
 
             while (senderRunning.get() || !sendQueue.isEmpty()) {
                 try {
+                    pollAttempts++
+                    if (pollAttempts <= 5) {
+                        Log.d(TAG, "Poll attempt $pollAttempts, queue size=${sendQueue.size}, socket=$socket, serverAddress=$serverAddress")
+                    }
+
                     // Wait for raw frame (blocking with timeout)
                     val rawFrame = sendQueue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
                     if (rawFrame == null) {
                         // Log every 50 empty polls to detect if we're waiting
-                        if (framesSent % 50 == 0 && framesSent > 0) {
-                            Log.d(TAG, "Sender waiting, queue empty (sent $framesSent frames so far)")
+                        if (pollAttempts % 50 == 1) {
+                            Log.d(TAG, "Sender waiting, queue empty (poll attempt $pollAttempts, sent $framesSent frames so far)")
                         }
                         continue
                     }
 
-                    val sock = socket ?: break
-                    val addr = serverAddress ?: break
+                    Log.d(TAG, "Got frame from queue! size=${rawFrame.frameData.size}, checking socket/address...")
+
+                    val sock = socket
+                    if (sock == null) {
+                        Log.e(TAG, "Socket is null! Breaking out of sender loop")
+                        break
+                    }
+
+                    val addr = serverAddress
+                    if (addr == null) {
+                        Log.e(TAG, "ServerAddress is null! Breaking out of sender loop")
+                        break
+                    }
 
                     Log.d(TAG, "Dequeued frame ${framesSent + 1}, size=${rawFrame.frameData.size}, queue=${sendQueue.size}")
 
