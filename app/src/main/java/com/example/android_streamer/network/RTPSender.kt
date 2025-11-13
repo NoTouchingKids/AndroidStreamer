@@ -36,7 +36,8 @@ class RTPSender(
     private var nalCount = 0
 
     // Preallocated scan buffer for faster NAL parsing (reused, zero allocations)
-    private val scanBuffer = ByteArray(512 * 1024)  // 512KB for I-frames
+    // 2MB handles large I-frames at 75-100 Mbps bitrates
+    private val scanBuffer = ByteArray(2 * 1024 * 1024)  // 2MB for I-frames
 
     private var sequenceNumber: Int = 1
     private val ssrc: Int = 0x12345678
