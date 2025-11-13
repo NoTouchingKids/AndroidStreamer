@@ -49,7 +49,7 @@ class RTPSender(
         val rtpTimestamp: Int
     )
 
-    private val sendQueue = ArrayBlockingQueue<ParsedFrame>(8)  // Buffer up to 8 parsed frames
+    private val sendQueue = ArrayBlockingQueue<ParsedFrame>(32)  // Buffer up to 32 parsed frames for burst tolerance
     private var senderThread: Thread? = null
     private val senderRunning = AtomicBoolean(false)
 
@@ -115,18 +115,22 @@ class RTPSender(
         val rtpTimestamp = (timestampUs * 90 / 1000).toInt()
 
         // Parse NALs quickly on caller thread (EncoderSender)
+        val parseStart = System.nanoTime()
         parseNalUnits(buffer)
+        val parseTime = (System.nanoTime() - parseStart) / 1_000_000
 
         if (nalCount == 0) {
             return
         }
 
         // Copy frame data (must copy before MediaCodec buffer is released)
+        val copyStart = System.nanoTime()
         val frameSize = buffer.remaining()
         val frameDataCopy = ByteArray(frameSize)
         val savedPos = buffer.position()
         buffer.get(frameDataCopy)
         buffer.position(savedPos)
+        val copyTime = (System.nanoTime() - copyStart) / 1_000_000
 
         // Copy NAL metadata (arrays will be reused on next frame)
         val offsetsCopy = nalOffsets.copyOf(nalCount)
@@ -135,9 +139,12 @@ class RTPSender(
         // Enqueue for async sending (non-blocking)
         val parsed = ParsedFrame(frameDataCopy, offsetsCopy, sizesCopy, nalCount, rtpTimestamp)
 
+        val queueSizeBefore = sendQueue.size
         if (!sendQueue.offer(parsed)) {
-            // Queue full - drop frame (should be rare)
-            Log.w(TAG, "Send queue full, dropped frame")
+            // Queue full - drop frame (should be rare with 32-frame buffer)
+            Log.w(TAG, "Send queue full (${sendQueue.size}), dropped frame (${frameSize} bytes)")
+        } else if (packetsSent < 1200) {  // Log first ~20 frames at 60fps
+            Log.d(TAG, "Enqueued: ${frameSize}b, parse=${parseTime}ms, copy=${copyTime}ms, queue=${queueSizeBefore}→${sendQueue.size}")
         }
     }
 
@@ -347,6 +354,7 @@ class RTPSender(
     private inner class SenderRunnable : Runnable {
         override fun run() {
             Log.i(TAG, "Sender thread started")
+            var framesSent = 0
 
             while (senderRunning.get() || !sendQueue.isEmpty()) {
                 try {
@@ -356,6 +364,9 @@ class RTPSender(
 
                     val sock = socket ?: break
                     val addr = serverAddress ?: break
+
+                    val startTime = System.nanoTime()
+                    val packetsBefore = packetsSent
 
                     // Send all NAL units for this frame
                     for (i in 0 until parsed.nalCount) {
@@ -369,6 +380,15 @@ class RTPSender(
                             sendFragmentedNal(sock, addr, parsed.frameData, nalOffset, nalSize, parsed.rtpTimestamp, isLastNal)
                         }
                     }
+
+                    framesSent++
+                    val sendTimeMs = (System.nanoTime() - startTime) / 1_000_000
+                    val packetsThisFrame = packetsSent - packetsBefore
+
+                    // Log first 20 frames and every 60th frame thereafter
+                    if (framesSent <= 20 || framesSent % 60 == 0) {
+                        Log.d(TAG, "Sent frame $framesSent: ${parsed.frameData.size} bytes, $packetsThisFrame packets, ${sendTimeMs}ms, queue=${sendQueue.size}")
+                    }
                 } catch (e: InterruptedException) {
                     Log.i(TAG, "Sender thread interrupted")
                     break
@@ -377,7 +397,7 @@ class RTPSender(
                 }
             }
 
-            Log.i(TAG, "Sender thread stopped")
+            Log.i(TAG, "Sender thread stopped (sent $framesSent frames)")
         }
     }
 
