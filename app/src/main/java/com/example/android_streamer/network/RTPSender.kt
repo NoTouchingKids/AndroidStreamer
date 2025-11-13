@@ -48,7 +48,7 @@ class RTPSender(
         val isKeyFrame: Boolean
     )
 
-    private val sendQueue = ArrayBlockingQueue<RawFrame>(8)  // 8 frames = ~133ms latency at 60fps (low latency mode)
+    private val sendQueue = ArrayBlockingQueue<RawFrame>(24)  // 24 frames = ~400ms buffer for high bitrate 4K60
     private var senderThread: Thread? = null
     private val senderRunning = AtomicBoolean(false)
 
@@ -95,7 +95,7 @@ class RTPSender(
                 DatagramSocket()
             }
 
-            socket?.sendBufferSize = 2 * 1024 * 1024  // 2MB for smoother burst handling
+            socket?.sendBufferSize = 16 * 1024 * 1024  // 16MB for high bitrate 4K60 streaming
             socket?.trafficClass = 0x10
 
             // Start dedicated sender thread
