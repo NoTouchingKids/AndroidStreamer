@@ -251,40 +251,48 @@ class H265Encoder(
 
         override fun run() {
             while (running.get() || !ring.isEmpty()) {
-                val index = ring.poll()
-
-                if (index == -1) {
-                    // Sleep for ~half frame interval to avoid busy-wait
-                    // At 60fps frames arrive every 16.7ms, so sleeping 8ms means
-                    // we wake up ~2 times per frame instead of spinning constantly
-                    Thread.sleep(8)
-                    continue
-                }
-
                 try {
-                    val codec = mediaCodec ?: break
-                    val buffer = codec.getOutputBuffer(index) ?: continue
+                    val index = ring.poll()
 
-                    val offset = metaTables.getOffset(index)
-                    val size = metaTables.getSize(index)
-                    val ptsUs = metaTables.getPtsUs(index)
-                    val isKeyFrame = metaTables.isKeyFrame(index)
-
-                    buffer.position(offset)
-                    buffer.limit(offset + size)
-
-                    if (rtpSender != null) {
-                        try {
-                            rtpSender.sendFrame(buffer, ptsUs, isKeyFrame)
-                        } catch (e: Exception) {
-                            Log.e(TAG, "RTP send failed", e)
-                        }
+                    if (index == -1) {
+                        // Sleep for ~half frame interval to avoid busy-wait
+                        // At 60fps frames arrive every 16.7ms, so sleeping 8ms means
+                        // we wake up ~2 times per frame instead of spinning constantly
+                        Thread.sleep(8)
+                        continue
                     }
 
-                } finally {
-                    mediaCodec?.releaseOutputBuffer(index, false)
+                    try {
+                        val codec = mediaCodec ?: break
+                        val buffer = codec.getOutputBuffer(index) ?: continue
+
+                        val offset = metaTables.getOffset(index)
+                        val size = metaTables.getSize(index)
+                        val ptsUs = metaTables.getPtsUs(index)
+                        val isKeyFrame = metaTables.isKeyFrame(index)
+
+                        buffer.position(offset)
+                        buffer.limit(offset + size)
+
+                        if (rtpSender != null) {
+                            try {
+                                rtpSender.sendFrame(buffer, ptsUs, isKeyFrame)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "RTP send failed", e)
+                            }
+                        }
+
+                    } finally {
+                        mediaCodec?.releaseOutputBuffer(index, false)
+                    }
+                } catch (e: InterruptedException) {
+                    Log.i(TAG, "EncoderSender thread interrupted, shutting down gracefully")
+                    break
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in EncoderSender thread, continuing", e)
                 }
             }
+            Log.i(TAG, "EncoderSender thread stopped")
         }
     }
 
