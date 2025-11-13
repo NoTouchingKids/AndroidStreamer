@@ -28,7 +28,6 @@ class RTPSender(
 
     private val packetBuffer = ByteArray(MTU)
     private val packet = DatagramPacket(packetBuffer, packetBuffer.size)
-    private val frameBuffer = ByteArray(1 * 1024 * 1024)
 
     private var sequenceNumber: Int = 1
     private val ssrc: Int = 0x12345678
@@ -62,7 +61,7 @@ class RTPSender(
                 DatagramSocket()
             }
 
-            socket?.sendBufferSize = 512 * 1024
+            socket?.sendBufferSize = 2 * 1024 * 1024  // 2MB for smoother burst handling
             socket?.trafficClass = 0x10
         } catch (e: Exception) {
             Log.e(TAG, "RTP start failed", e)
@@ -84,19 +83,8 @@ class RTPSender(
         val sock = socket ?: return
         val addr = serverAddress ?: return
 
-        val frameSize = buffer.remaining()
-
-        if (frameSize > frameBuffer.size) {
-            Log.e(TAG, "Frame too large: $frameSize bytes")
-            return
-        }
-
-        val originalPosition = buffer.position()
-        buffer.get(frameBuffer, 0, frameSize)
-        buffer.position(originalPosition)
-
         val rtpTimestamp = (timestampUs * 90 / 1000).toInt()
-        val nalUnits = parseNalUnits(frameBuffer, frameSize)
+        val nalUnits = parseNalUnits(buffer)
 
         if (nalUnits.isEmpty()) {
             return
@@ -106,32 +94,32 @@ class RTPSender(
             val nal = nalUnits[i]
             val isLastNal = (i == nalUnits.size - 1)
 
-            System.arraycopy(frameBuffer, nal.offset, frameBuffer, 0, nal.size)
-
             if (nal.size <= MTU - RTP_HEADER_SIZE) {
-                sendSinglePacket(sock, addr, nal.size, rtpTimestamp, isLastNal)
+                sendSinglePacket(sock, addr, buffer, nal.offset, nal.size, rtpTimestamp, isLastNal)
             } else {
-                sendFragmentedNal(sock, addr, nal.size, rtpTimestamp, isLastNal)
+                sendFragmentedNal(sock, addr, buffer, nal.offset, nal.size, rtpTimestamp, isLastNal)
             }
         }
     }
 
-    private fun parseNalUnits(buffer: ByteArray, bufferSize: Int): List<NalUnit> {
+    private fun parseNalUnits(buffer: ByteBuffer): List<NalUnit> {
         val nalUnits = mutableListOf<NalUnit>()
+        val startPosition = buffer.position()
+        val bufferSize = buffer.remaining()
         var offset = 0
 
         while (offset < bufferSize) {
             val startCodeSize = when {
                 offset + 3 < bufferSize &&
-                buffer[offset] == 0.toByte() &&
-                buffer[offset + 1] == 0.toByte() &&
-                buffer[offset + 2] == 0.toByte() &&
-                buffer[offset + 3] == 1.toByte() -> 4
+                buffer.get(startPosition + offset) == 0.toByte() &&
+                buffer.get(startPosition + offset + 1) == 0.toByte() &&
+                buffer.get(startPosition + offset + 2) == 0.toByte() &&
+                buffer.get(startPosition + offset + 3) == 1.toByte() -> 4
 
                 offset + 2 < bufferSize &&
-                buffer[offset] == 0.toByte() &&
-                buffer[offset + 1] == 0.toByte() &&
-                buffer[offset + 2] == 1.toByte() -> 3
+                buffer.get(startPosition + offset) == 0.toByte() &&
+                buffer.get(startPosition + offset + 1) == 0.toByte() &&
+                buffer.get(startPosition + offset + 2) == 1.toByte() -> 3
 
                 else -> 0
             }
@@ -145,14 +133,14 @@ class RTPSender(
             var nalEnd = nalStart + 1
             while (nalEnd < bufferSize) {
                 if ((nalEnd + 3 < bufferSize &&
-                    buffer[nalEnd] == 0.toByte() &&
-                    buffer[nalEnd + 1] == 0.toByte() &&
-                    buffer[nalEnd + 2] == 0.toByte() &&
-                    buffer[nalEnd + 3] == 1.toByte()) ||
+                    buffer.get(startPosition + nalEnd) == 0.toByte() &&
+                    buffer.get(startPosition + nalEnd + 1) == 0.toByte() &&
+                    buffer.get(startPosition + nalEnd + 2) == 0.toByte() &&
+                    buffer.get(startPosition + nalEnd + 3) == 1.toByte()) ||
                     (nalEnd + 2 < bufferSize &&
-                    buffer[nalEnd] == 0.toByte() &&
-                    buffer[nalEnd + 1] == 0.toByte() &&
-                    buffer[nalEnd + 2] == 1.toByte())) {
+                    buffer.get(startPosition + nalEnd) == 0.toByte() &&
+                    buffer.get(startPosition + nalEnd + 1) == 0.toByte() &&
+                    buffer.get(startPosition + nalEnd + 2) == 1.toByte())) {
                     break
                 }
                 nalEnd++
@@ -160,7 +148,7 @@ class RTPSender(
 
             val nalSize = nalEnd - nalStart
             if (nalSize > 0) {
-                nalUnits.add(NalUnit(nalStart, nalSize))
+                nalUnits.add(NalUnit(startPosition + nalStart, nalSize))
             }
 
             offset = nalEnd
@@ -174,7 +162,9 @@ class RTPSender(
     private fun sendSinglePacket(
         sock: DatagramSocket,
         addr: InetAddress,
-        frameSize: Int,
+        buffer: ByteBuffer,
+        nalOffset: Int,
+        nalSize: Int,
         rtpTimestamp: Int,
         markerBit: Boolean
     ) {
@@ -184,11 +174,15 @@ class RTPSender(
             buildRtpHeader(packetBuffer, offset, markerBit, rtpTimestamp)
             offset += RTP_HEADER_SIZE
 
-            System.arraycopy(frameBuffer, 0, packetBuffer, offset, frameSize)
+            // Read NAL unit directly from ByteBuffer
+            val savedPosition = buffer.position()
+            buffer.position(nalOffset)
+            buffer.get(packetBuffer, offset, nalSize)
+            buffer.position(savedPosition)
 
             packet.address = addr
             packet.port = serverPort
-            packet.length = offset + frameSize
+            packet.length = offset + nalSize
             sock.send(packet)
 
             packetsSent++
@@ -203,12 +197,14 @@ class RTPSender(
     private fun sendFragmentedNal(
         sock: DatagramSocket,
         addr: InetAddress,
+        buffer: ByteBuffer,
+        nalOffset: Int,
         nalSize: Int,
         rtpTimestamp: Int,
         isLastNal: Boolean
     ) {
-        val nalHeader1 = frameBuffer[0]
-        val nalHeader2 = frameBuffer[1]
+        val nalHeader1 = buffer.get(nalOffset)
+        val nalHeader2 = buffer.get(nalOffset + 1)
         val nalType = (nalHeader1.toInt() shr 1) and 0x3F
 
         fragmentedFrames++
@@ -236,7 +232,11 @@ class RTPSender(
                 if (isLast) fuHeader = fuHeader or 0x40
                 packetBuffer[offset++] = fuHeader.toByte()
 
-                System.arraycopy(frameBuffer, payloadOffset, packetBuffer, offset, fragmentSize)
+                // Read fragment directly from ByteBuffer
+                val savedPosition = buffer.position()
+                buffer.position(nalOffset + payloadOffset)
+                buffer.get(packetBuffer, offset, fragmentSize)
+                buffer.position(savedPosition)
 
                 packet.address = addr
                 packet.port = serverPort
