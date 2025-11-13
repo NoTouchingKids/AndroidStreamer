@@ -254,7 +254,8 @@ class H265Encoder(
                 val index = ring.poll()
 
                 if (index == -1) {
-                    Thread.yield()
+                    // Sleep briefly instead of busy-wait to avoid burning CPU
+                    Thread.sleep(1)  // 1ms is acceptable latency for streaming
                     continue
                 }
 
