@@ -344,10 +344,18 @@ class RTPSender(
                 try {
                     // Wait for raw frame (blocking with timeout)
                     val rawFrame = sendQueue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
-                        ?: continue
+                    if (rawFrame == null) {
+                        // Log every 50 empty polls to detect if we're waiting
+                        if (framesSent % 50 == 0 && framesSent > 0) {
+                            Log.d(TAG, "Sender waiting, queue empty (sent $framesSent frames so far)")
+                        }
+                        continue
+                    }
 
                     val sock = socket ?: break
                     val addr = serverAddress ?: break
+
+                    Log.d(TAG, "Dequeued frame ${framesSent + 1}, size=${rawFrame.frameData.size}, queue=${sendQueue.size}")
 
                     val startTime = System.nanoTime()
                     val packetsBefore = packetsSent
@@ -356,6 +364,8 @@ class RTPSender(
                     val parseStart = System.nanoTime()
                     parseNalUnits(rawFrame.frameData)
                     val parseTime = (System.nanoTime() - parseStart) / 1_000_000
+
+                    Log.d(TAG, "Parsed frame ${framesSent + 1}: ${nalCount} NALs in ${parseTime}ms")
 
                     if (nalCount == 0) {
                         Log.w(TAG, "Frame has no NAL units, skipping")
@@ -379,10 +389,7 @@ class RTPSender(
                     val totalTimeMs = (System.nanoTime() - startTime) / 1_000_000
                     val packetsThisFrame = packetsSent - packetsBefore
 
-                    // Log first 20 frames and every 60th frame thereafter
-                    if (framesSent <= 20 || framesSent % 60 == 0) {
-                        Log.d(TAG, "Sent frame $framesSent: ${rawFrame.frameData.size}b, parse=${parseTime}ms, total=${totalTimeMs}ms, ${packetsThisFrame}pkts, queue=${sendQueue.size}, errors=$sendErrors")
-                    }
+                    Log.d(TAG, "Sent frame $framesSent: ${rawFrame.frameData.size}b, parse=${parseTime}ms, total=${totalTimeMs}ms, ${packetsThisFrame}pkts, queue=${sendQueue.size}, errors=$sendErrors")
                 } catch (e: InterruptedException) {
                     Log.i(TAG, "Sender thread interrupted")
                     break
