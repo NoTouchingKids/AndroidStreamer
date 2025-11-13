@@ -53,15 +53,19 @@ class MainActivity : AppCompatActivity() {
         rtspClient = RTSPClient(MEDIAMTX_SERVER_IP, MEDIAMTX_RTSP_PORT, STREAM_PATH)
         rtpSender = RTPSender(MEDIAMTX_SERVER_IP, 0, rtspClient!!.getClientRtpPort())
 
-        rtspClient?.onReadyToStream = { serverIp, serverPort ->
-            rtpSender?.updateDestination(serverIp, serverPort)
-            rtpSender?.let {
-                try {
-                    it.start()
-                } catch (e: Exception) {
-                    Log.e(TAG, "RTP start failed", e)
-                }
+        // Start RTP sender thread immediately so it's ready when frames arrive
+        rtpSender?.let {
+            try {
+                it.start()
+                Log.i(TAG, "RTP sender started successfully")
+            } catch (e: Exception) {
+                Log.e(TAG, "RTP start failed", e)
             }
+        }
+
+        rtspClient?.onReadyToStream = { serverIp, serverPort ->
+            // Update destination when RTSP negotiation completes
+            rtpSender?.updateDestination(serverIp, serverPort)
             runOnUiThread { updateStatus("Streaming") }
         }
 
@@ -141,15 +145,19 @@ class MainActivity : AppCompatActivity() {
         rtspClient = RTSPClient(MEDIAMTX_SERVER_IP, MEDIAMTX_RTSP_PORT, STREAM_PATH)
         rtpSender = RTPSender(MEDIAMTX_SERVER_IP, 0, rtspClient!!.getClientRtpPort())
 
-        rtspClient?.onReadyToStream = { serverIp, serverPort ->
-            rtpSender?.updateDestination(serverIp, serverPort)
-            rtpSender?.let {
-                try {
-                    it.start()
-                } catch (e: Exception) {
-                    Log.e(TAG, "RTP restart failed", e)
-                }
+        // Start RTP sender thread immediately so it's ready when frames arrive
+        rtpSender?.let {
+            try {
+                it.start()
+                Log.i(TAG, "RTP sender restarted successfully")
+            } catch (e: Exception) {
+                Log.e(TAG, "RTP restart failed", e)
             }
+        }
+
+        rtspClient?.onReadyToStream = { serverIp, serverPort ->
+            // Update destination when RTSP negotiation completes
+            rtpSender?.updateDestination(serverIp, serverPort)
             runOnUiThread { updateStatus("Streaming") }
         }
 
