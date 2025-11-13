@@ -108,6 +108,7 @@ class RTPSender(
     }
 
     fun sendFrame(buffer: ByteBuffer, timestampUs: Long, isKeyFrame: Boolean) {
+        val frameStartTime = System.nanoTime()
         val rtpTimestamp = (timestampUs * 90 / 1000).toInt()
 
         // Copy frame data ONLY on caller thread (EncoderSender) - parsing moved to sender thread
@@ -115,17 +116,22 @@ class RTPSender(
         val frameSize = buffer.remaining()
         val frameDataCopy = ByteArray(frameSize)
         buffer.get(frameDataCopy)
-        val copyTime = (System.nanoTime() - copyStart) / 1_000_000
+        val copyTimeUs = (System.nanoTime() - copyStart) / 1000  // Microseconds for precision
 
         // Enqueue raw frame for async parsing and sending (non-blocking)
+        val enqueueStart = System.nanoTime()
         val rawFrame = RawFrame(frameDataCopy, rtpTimestamp, isKeyFrame)
-
         val queueSizeBefore = sendQueue.size
-        if (!sendQueue.offer(rawFrame)) {
+        val enqueued = sendQueue.offer(rawFrame)
+        val enqueueTimeUs = (System.nanoTime() - enqueueStart) / 1000
+
+        val totalTimeUs = (System.nanoTime() - frameStartTime) / 1000
+
+        if (!enqueued) {
             // Queue full - drop frame (should be rare with 32-frame buffer)
             Log.w(TAG, "Send queue full (${sendQueue.size}), dropped frame (${frameSize} bytes)")
-        } else if (packetsSent < 1200) {  // Log first ~20 frames at 60fps
-            Log.d(TAG, "Enqueued: ${frameSize}b, copy=${copyTime}ms, queue=${queueSizeBefore}→${sendQueue.size}")
+        } else if (packetsSent < 1200 || totalTimeUs > 2000) {  // Log first 20 frames OR if >2ms
+            Log.d(TAG, "Enqueued: ${frameSize}b, copy=${copyTimeUs}µs, enqueue=${enqueueTimeUs}µs, total=${totalTimeUs}µs, queue=${queueSizeBefore}→${sendQueue.size}")
         }
     }
 
