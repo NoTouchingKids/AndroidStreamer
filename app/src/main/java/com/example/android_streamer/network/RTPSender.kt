@@ -48,7 +48,7 @@ class RTPSender(
         val isKeyFrame: Boolean
     )
 
-    private val sendQueue = ArrayBlockingQueue<RawFrame>(32)  // Buffer up to 32 raw frames for burst tolerance
+    private val sendQueue = ArrayBlockingQueue<RawFrame>(8)  // 8 frames = ~133ms latency at 60fps (low latency mode)
     private var senderThread: Thread? = null
     private val senderRunning = AtomicBoolean(false)
 
