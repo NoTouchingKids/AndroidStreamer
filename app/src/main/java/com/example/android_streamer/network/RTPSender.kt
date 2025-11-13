@@ -35,10 +35,6 @@ class RTPSender(
     private val nalSizes = IntArray(maxNalUnits)
     private var nalCount = 0
 
-    // Preallocated scan buffer for faster NAL parsing (reused, zero allocations)
-    // 2MB handles large I-frames at 75-100 Mbps bitrates
-    private val scanBuffer = ByteArray(2 * 1024 * 1024)  // 2MB for I-frames
-
     private var sequenceNumber: Int = 1
     private val ssrc: Int = 0x12345678
 
@@ -117,8 +113,8 @@ class RTPSender(
 
     /**
      * Parse NAL units from H.265 frame into preallocated arrays.
-     * Zero allocations: reuses scanBuffer, nalOffsets, and nalSizes.
-     * ~60% faster than previous implementation with List<NalUnit>.
+     * Zero allocations: reuses nalOffsets and nalSizes.
+     * Direct ByteBuffer scanning - no memory copy overhead.
      */
     private fun parseNalUnits(buffer: ByteBuffer) {
         nalCount = 0
@@ -127,27 +123,21 @@ class RTPSender(
 
         if (bufferSize == 0) return
 
-        // Bulk copy to byte array for faster scanning (avoids ByteBuffer overhead)
-        val copySize = minOf(bufferSize, scanBuffer.size)
-        val savedPos = buffer.position()
-        buffer.get(scanBuffer, 0, copySize)
-        buffer.position(savedPos)
-
         var offset = 0
 
-        while (offset < copySize && nalCount < maxNalUnits) {
+        while (offset < bufferSize && nalCount < maxNalUnits) {
             // Scan for start code: 0x00 00 00 01 (4-byte) or 0x00 00 01 (3-byte)
             val startCodeSize = when {
-                offset + 3 < copySize &&
-                scanBuffer[offset] == 0.toByte() &&
-                scanBuffer[offset + 1] == 0.toByte() &&
-                scanBuffer[offset + 2] == 0.toByte() &&
-                scanBuffer[offset + 3] == 1.toByte() -> 4
+                offset + 3 < bufferSize &&
+                buffer.get(startPosition + offset) == 0.toByte() &&
+                buffer.get(startPosition + offset + 1) == 0.toByte() &&
+                buffer.get(startPosition + offset + 2) == 0.toByte() &&
+                buffer.get(startPosition + offset + 3) == 1.toByte() -> 4
 
-                offset + 2 < copySize &&
-                scanBuffer[offset] == 0.toByte() &&
-                scanBuffer[offset + 1] == 0.toByte() &&
-                scanBuffer[offset + 2] == 1.toByte() -> 3
+                offset + 2 < bufferSize &&
+                buffer.get(startPosition + offset) == 0.toByte() &&
+                buffer.get(startPosition + offset + 1) == 0.toByte() &&
+                buffer.get(startPosition + offset + 2) == 1.toByte() -> 3
 
                 else -> 0
             }
@@ -161,16 +151,16 @@ class RTPSender(
             var nalEnd = nalStart + 1
 
             // Find end of NAL (next start code or end of buffer)
-            while (nalEnd < copySize) {
-                if ((nalEnd + 3 < copySize &&
-                    scanBuffer[nalEnd] == 0.toByte() &&
-                    scanBuffer[nalEnd + 1] == 0.toByte() &&
-                    scanBuffer[nalEnd + 2] == 0.toByte() &&
-                    scanBuffer[nalEnd + 3] == 1.toByte()) ||
-                    (nalEnd + 2 < copySize &&
-                    scanBuffer[nalEnd] == 0.toByte() &&
-                    scanBuffer[nalEnd + 1] == 0.toByte() &&
-                    scanBuffer[nalEnd + 2] == 1.toByte())) {
+            while (nalEnd < bufferSize) {
+                if ((nalEnd + 3 < bufferSize &&
+                    buffer.get(startPosition + nalEnd) == 0.toByte() &&
+                    buffer.get(startPosition + nalEnd + 1) == 0.toByte() &&
+                    buffer.get(startPosition + nalEnd + 2) == 0.toByte() &&
+                    buffer.get(startPosition + nalEnd + 3) == 1.toByte()) ||
+                    (nalEnd + 2 < bufferSize &&
+                    buffer.get(startPosition + nalEnd) == 0.toByte() &&
+                    buffer.get(startPosition + nalEnd + 1) == 0.toByte() &&
+                    buffer.get(startPosition + nalEnd + 2) == 1.toByte())) {
                     break
                 }
                 nalEnd++
