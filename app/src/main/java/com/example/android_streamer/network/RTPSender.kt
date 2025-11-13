@@ -8,6 +8,8 @@ import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.nio.ByteBuffer
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * RTP sender for H.265/HEVC streaming.
@@ -37,6 +39,19 @@ class RTPSender(
 
     // Scan buffer for fast start code detection (copy once, scan fast)
     private val scanBuffer = ByteArray(2 * 1024 * 1024)  // 2MB for large I-frames
+
+    // Dedicated sender thread for parallel packet transmission
+    private data class ParsedFrame(
+        val buffer: ByteBuffer,  // Reference to MediaCodec buffer (read-only after parsing)
+        val nalOffsets: IntArray,
+        val nalSizes: IntArray,
+        val nalCount: Int,
+        val rtpTimestamp: Int
+    )
+
+    private val sendQueue = ArrayBlockingQueue<ParsedFrame>(8)  // Buffer up to 8 parsed frames
+    private var senderThread: Thread? = null
+    private val senderRunning = AtomicBoolean(false)
 
     private var sequenceNumber: Int = 1
     private val ssrc: Int = 0x12345678
@@ -72,6 +87,14 @@ class RTPSender(
 
             socket?.sendBufferSize = 2 * 1024 * 1024  // 2MB for smoother burst handling
             socket?.trafficClass = 0x10
+
+            // Start dedicated sender thread
+            senderRunning.set(true)
+            senderThread = Thread(SenderRunnable(), "RTP-Sender").apply {
+                priority = Thread.MAX_PRIORITY
+                start()
+            }
+            Log.i(TAG, "RTP sender thread started")
         } catch (e: Exception) {
             Log.e(TAG, "RTP start failed", e)
             throw e
@@ -89,28 +112,25 @@ class RTPSender(
     }
 
     fun sendFrame(buffer: ByteBuffer, timestampUs: Long, isKeyFrame: Boolean) {
-        val sock = socket ?: return
-        val addr = serverAddress ?: return
-
         val rtpTimestamp = (timestampUs * 90 / 1000).toInt()
 
-        // Parse NALs into preallocated arrays (zero allocations)
+        // Parse NALs quickly on caller thread (EncoderSender)
         parseNalUnits(buffer)
 
         if (nalCount == 0) {
             return
         }
 
-        for (i in 0 until nalCount) {
-            val isLastNal = (i == nalCount - 1)
-            val nalOffset = nalOffsets[i]
-            val nalSize = nalSizes[i]
+        // Copy NAL metadata (arrays will be reused on next frame)
+        val offsetsCopy = nalOffsets.copyOf(nalCount)
+        val sizesCopy = nalSizes.copyOf(nalCount)
 
-            if (nalSize <= MTU - RTP_HEADER_SIZE) {
-                sendSinglePacket(sock, addr, buffer, nalOffset, nalSize, rtpTimestamp, isLastNal)
-            } else {
-                sendFragmentedNal(sock, addr, buffer, nalOffset, nalSize, rtpTimestamp, isLastNal)
-            }
+        // Enqueue for async sending (non-blocking)
+        val parsed = ParsedFrame(buffer, offsetsCopy, sizesCopy, nalCount, rtpTimestamp)
+
+        if (!sendQueue.offer(parsed)) {
+            // Queue full - drop frame (should be rare)
+            Log.w(TAG, "Send queue full, dropped frame")
         }
     }
 
@@ -319,7 +339,57 @@ class RTPSender(
         buffer[offset + 11] = (ssrc and 0xFF).toByte()
     }
 
+    /**
+     * Dedicated sender thread - pulls parsed frames from queue and sends packets.
+     * Runs in parallel with parsing, allowing parser to stay ahead of sender.
+     */
+    private inner class SenderRunnable : Runnable {
+        override fun run() {
+            Log.i(TAG, "Sender thread started")
+
+            while (senderRunning.get() || !sendQueue.isEmpty()) {
+                try {
+                    // Wait for parsed frame (blocking with timeout)
+                    val parsed = sendQueue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+                        ?: continue
+
+                    val sock = socket ?: break
+                    val addr = serverAddress ?: break
+
+                    // Send all NAL units for this frame
+                    for (i in 0 until parsed.nalCount) {
+                        val isLastNal = (i == parsed.nalCount - 1)
+                        val nalOffset = parsed.nalOffsets[i]
+                        val nalSize = parsed.nalSizes[i]
+
+                        if (nalSize <= MTU - RTP_HEADER_SIZE) {
+                            sendSinglePacket(sock, addr, parsed.buffer, nalOffset, nalSize, parsed.rtpTimestamp, isLastNal)
+                        } else {
+                            sendFragmentedNal(sock, addr, parsed.buffer, nalOffset, nalSize, parsed.rtpTimestamp, isLastNal)
+                        }
+                    }
+                } catch (e: InterruptedException) {
+                    Log.i(TAG, "Sender thread interrupted")
+                    break
+                } catch (e: Exception) {
+                    Log.e(TAG, "Sender thread error", e)
+                }
+            }
+
+            Log.i(TAG, "Sender thread stopped")
+        }
+    }
+
     fun stop() {
+        // Stop sender thread
+        senderRunning.set(false)
+        senderThread?.interrupt()
+        senderThread?.join(1000)
+        senderThread = null
+
+        // Clear queue
+        sendQueue.clear()
+
         socket?.close()
         socket = null
         serverAddress = null
