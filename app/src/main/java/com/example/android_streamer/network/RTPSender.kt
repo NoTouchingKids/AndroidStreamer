@@ -23,6 +23,9 @@ class RTPSender(
     private var socket: DatagramSocket? = null
     private var serverAddress: InetAddress? = null
 
+    // Flag to indicate when destination is valid and ready to send
+    private val destinationReady = java.util.concurrent.atomic.AtomicBoolean(false)
+
     private val MTU = 1400
     private val RTP_HEADER_SIZE = 12
     private val FU_HEADER_SIZE = 3
@@ -110,6 +113,8 @@ class RTPSender(
             this.serverIp = ip
             this.serverPort = port
             this.serverAddress = Inet4Address.getByName(ip) as Inet4Address
+            destinationReady.set(true)  // Mark destination as valid, ready to send
+            Log.i(TAG, "Destination updated to $ip:$port, sender is now ready")
         } catch (e: Exception) {
             Log.e(TAG, "Update destination failed", e)
         }
@@ -362,7 +367,18 @@ class RTPSender(
                         continue
                     }
 
-                    Log.d(TAG, "Got frame from queue! size=${rawFrame.frameData.size}, checking socket/address...")
+                    Log.d(TAG, "Got frame from queue! size=${rawFrame.frameData.size}, checking destination ready...")
+
+                    // Wait for RTSP negotiation to complete and provide valid destination
+                    if (!destinationReady.get()) {
+                        if (pollAttempts % 50 == 1) {
+                            Log.d(TAG, "Destination not ready yet, waiting for RTSP negotiation (queued ${sendQueue.size} frames)")
+                        }
+                        // Put frame back in queue and wait
+                        sendQueue.offer(rawFrame)
+                        Thread.sleep(50)  // Wait for RTSP
+                        continue
+                    }
 
                     val sock = socket
                     if (sock == null) {
