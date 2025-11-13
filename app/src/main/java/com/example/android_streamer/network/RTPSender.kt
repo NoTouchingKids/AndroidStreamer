@@ -67,6 +67,10 @@ class RTPSender(
     var fragmentedFrames = 0L
         private set
 
+    @Volatile
+    var sendErrors = 0L
+        private set
+
     fun start() {
         try {
             serverAddress = Inet4Address.getByName(serverIp) as Inet4Address
@@ -232,7 +236,10 @@ class RTPSender(
             sequenceNumber = (sequenceNumber + 1) and 0xFFFF
 
         } catch (e: IOException) {
-            Log.w(TAG, "Send failed: ${e.message}")
+            sendErrors++
+            if (sendErrors % 100 == 1L) {  // Log first error and every 100th
+                Log.w(TAG, "Send failed: ${e.message} (total errors: $sendErrors)")
+            }
         }
     }
 
@@ -290,7 +297,10 @@ class RTPSender(
                 fragmentIndex++
 
             } catch (e: IOException) {
-                Log.w(TAG, "Fragment send failed: ${e.message}")
+                sendErrors++
+                if (sendErrors % 100 == 1L) {  // Log first error and every 100th
+                    Log.w(TAG, "Fragment send failed: ${e.message} (total errors: $sendErrors)")
+                }
                 break
             }
         }
@@ -371,7 +381,7 @@ class RTPSender(
 
                     // Log first 20 frames and every 60th frame thereafter
                     if (framesSent <= 20 || framesSent % 60 == 0) {
-                        Log.d(TAG, "Sent frame $framesSent: ${rawFrame.frameData.size}b, parse=${parseTime}ms, total=${totalTimeMs}ms, ${packetsThisFrame}pkts, queue=${sendQueue.size}")
+                        Log.d(TAG, "Sent frame $framesSent: ${rawFrame.frameData.size}b, parse=${parseTime}ms, total=${totalTimeMs}ms, ${packetsThisFrame}pkts, queue=${sendQueue.size}, errors=$sendErrors")
                     }
                 } catch (e: InterruptedException) {
                     Log.i(TAG, "Sender thread interrupted")
