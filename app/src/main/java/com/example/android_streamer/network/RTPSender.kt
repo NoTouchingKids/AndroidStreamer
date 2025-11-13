@@ -30,7 +30,7 @@ class RTPSender(
     private val packet = DatagramPacket(packetBuffer, packetBuffer.size)
 
     // Preallocated NAL unit storage (reused every frame, zero allocations)
-    private val maxNalUnits = 16  // Typical frame has 1-5 NALs, 16 is safe margin
+    private val maxNalUnits = 64  // Increased for high complexity encoding
     private val nalOffsets = IntArray(maxNalUnits)
     private val nalSizes = IntArray(maxNalUnits)
     private var nalCount = 0
@@ -174,6 +174,11 @@ class RTPSender(
             }
 
             offset = nalEnd
+        }
+
+        // Warn if we're truncating NAL units (indicates buffer too small)
+        if (nalCount >= maxNalUnits && offset < bufferSize) {
+            Log.w(TAG, "NAL limit reached! Found $nalCount NALs but more data remains. Increase maxNalUnits.")
         }
     }
 
