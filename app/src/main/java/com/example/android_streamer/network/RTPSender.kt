@@ -176,6 +176,11 @@ class RTPSender(
             offset = nalEnd
         }
 
+        // Debug logging (first 10 frames only to avoid spam)
+        if (packetsSent < 600) { // ~10 frames at 60fps
+            Log.d(TAG, "Parsed frame: pos=$startPosition size=$bufferSize NALs=$nalCount")
+        }
+
         // Warn if we're truncating NAL units (indicates buffer too small)
         if (nalCount >= maxNalUnits && offset < bufferSize) {
             Log.w(TAG, "NAL limit reached! Found $nalCount NALs but more data remains. Increase maxNalUnits.")
