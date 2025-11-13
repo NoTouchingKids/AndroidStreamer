@@ -37,19 +37,15 @@ class RTPSender(
     private val nalSizes = IntArray(maxNalUnits)
     private var nalCount = 0
 
-    // Scan buffer for fast start code detection (copy once, scan fast)
-    private val scanBuffer = ByteArray(2 * 1024 * 1024)  // 2MB for large I-frames
-
     // Dedicated sender thread for parallel packet transmission
-    private data class ParsedFrame(
+    // Changed to enqueue raw frame data - parsing happens on sender thread to unblock EncoderSender
+    private data class RawFrame(
         val frameData: ByteArray,  // Copied frame data (safe to use after MediaCodec release)
-        val nalOffsets: IntArray,
-        val nalSizes: IntArray,
-        val nalCount: Int,
-        val rtpTimestamp: Int
+        val rtpTimestamp: Int,
+        val isKeyFrame: Boolean
     )
 
-    private val sendQueue = ArrayBlockingQueue<ParsedFrame>(32)  // Buffer up to 32 parsed frames for burst tolerance
+    private val sendQueue = ArrayBlockingQueue<RawFrame>(32)  // Buffer up to 32 raw frames for burst tolerance
     private var senderThread: Thread? = null
     private val senderRunning = AtomicBoolean(false)
 
@@ -114,73 +110,50 @@ class RTPSender(
     fun sendFrame(buffer: ByteBuffer, timestampUs: Long, isKeyFrame: Boolean) {
         val rtpTimestamp = (timestampUs * 90 / 1000).toInt()
 
-        // Parse NALs quickly on caller thread (EncoderSender)
-        val parseStart = System.nanoTime()
-        parseNalUnits(buffer)
-        val parseTime = (System.nanoTime() - parseStart) / 1_000_000
-
-        if (nalCount == 0) {
-            return
-        }
-
-        // Copy frame data (must copy before MediaCodec buffer is released)
+        // Copy frame data ONLY on caller thread (EncoderSender) - parsing moved to sender thread
         val copyStart = System.nanoTime()
         val frameSize = buffer.remaining()
         val frameDataCopy = ByteArray(frameSize)
-        val savedPos = buffer.position()
         buffer.get(frameDataCopy)
-        buffer.position(savedPos)
         val copyTime = (System.nanoTime() - copyStart) / 1_000_000
 
-        // Copy NAL metadata (arrays will be reused on next frame)
-        val offsetsCopy = nalOffsets.copyOf(nalCount)
-        val sizesCopy = nalSizes.copyOf(nalCount)
-
-        // Enqueue for async sending (non-blocking)
-        val parsed = ParsedFrame(frameDataCopy, offsetsCopy, sizesCopy, nalCount, rtpTimestamp)
+        // Enqueue raw frame for async parsing and sending (non-blocking)
+        val rawFrame = RawFrame(frameDataCopy, rtpTimestamp, isKeyFrame)
 
         val queueSizeBefore = sendQueue.size
-        if (!sendQueue.offer(parsed)) {
+        if (!sendQueue.offer(rawFrame)) {
             // Queue full - drop frame (should be rare with 32-frame buffer)
             Log.w(TAG, "Send queue full (${sendQueue.size}), dropped frame (${frameSize} bytes)")
         } else if (packetsSent < 1200) {  // Log first ~20 frames at 60fps
-            Log.d(TAG, "Enqueued: ${frameSize}b, parse=${parseTime}ms, copy=${copyTime}ms, queue=${queueSizeBefore}→${sendQueue.size}")
+            Log.d(TAG, "Enqueued: ${frameSize}b, copy=${copyTime}ms, queue=${queueSizeBefore}→${sendQueue.size}")
         }
     }
 
     /**
-     * Parse NAL units from H.265 frame into preallocated arrays.
-     * Hybrid approach: Copy once to ByteArray for fast scanning, send from original ByteBuffer.
-     * Avoids millions of slow ByteBuffer.get() calls while still maintaining zero-copy send.
+     * Parse NAL units from H.265 frame ByteArray into preallocated arrays.
+     * Fast scanning directly on ByteArray (no ByteBuffer.get() overhead).
      */
-    private fun parseNalUnits(buffer: ByteBuffer) {
+    private fun parseNalUnits(frameData: ByteArray) {
         nalCount = 0
-        val startPosition = buffer.position()
-        val bufferSize = buffer.remaining()
+        val frameSize = frameData.size
 
-        if (bufferSize == 0) return
-
-        // Bulk copy for fast scanning (one copy, millions of fast array accesses)
-        val copySize = minOf(bufferSize, scanBuffer.size)
-        val savedPos = buffer.position()
-        buffer.get(scanBuffer, 0, copySize)
-        buffer.position(savedPos)
+        if (frameSize == 0) return
 
         var offset = 0
 
-        while (offset < copySize && nalCount < maxNalUnits) {
+        while (offset < frameSize && nalCount < maxNalUnits) {
             // Scan for start code: 0x00 00 00 01 (4-byte) or 0x00 00 01 (3-byte)
             val startCodeSize = when {
-                offset + 3 < copySize &&
-                scanBuffer[offset] == 0.toByte() &&
-                scanBuffer[offset + 1] == 0.toByte() &&
-                scanBuffer[offset + 2] == 0.toByte() &&
-                scanBuffer[offset + 3] == 1.toByte() -> 4
+                offset + 3 < frameSize &&
+                frameData[offset] == 0.toByte() &&
+                frameData[offset + 1] == 0.toByte() &&
+                frameData[offset + 2] == 0.toByte() &&
+                frameData[offset + 3] == 1.toByte() -> 4
 
-                offset + 2 < copySize &&
-                scanBuffer[offset] == 0.toByte() &&
-                scanBuffer[offset + 1] == 0.toByte() &&
-                scanBuffer[offset + 2] == 1.toByte() -> 3
+                offset + 2 < frameSize &&
+                frameData[offset] == 0.toByte() &&
+                frameData[offset + 1] == 0.toByte() &&
+                frameData[offset + 2] == 1.toByte() -> 3
 
                 else -> 0
             }
@@ -194,16 +167,16 @@ class RTPSender(
             var nalEnd = nalStart + 1
 
             // Find end of NAL (next start code or end of buffer)
-            while (nalEnd < copySize) {
-                if ((nalEnd + 3 < copySize &&
-                    scanBuffer[nalEnd] == 0.toByte() &&
-                    scanBuffer[nalEnd + 1] == 0.toByte() &&
-                    scanBuffer[nalEnd + 2] == 0.toByte() &&
-                    scanBuffer[nalEnd + 3] == 1.toByte()) ||
-                    (nalEnd + 2 < copySize &&
-                    scanBuffer[nalEnd] == 0.toByte() &&
-                    scanBuffer[nalEnd + 1] == 0.toByte() &&
-                    scanBuffer[nalEnd + 2] == 1.toByte())) {
+            while (nalEnd < frameSize) {
+                if ((nalEnd + 3 < frameSize &&
+                    frameData[nalEnd] == 0.toByte() &&
+                    frameData[nalEnd + 1] == 0.toByte() &&
+                    frameData[nalEnd + 2] == 0.toByte() &&
+                    frameData[nalEnd + 3] == 1.toByte()) ||
+                    (nalEnd + 2 < frameSize &&
+                    frameData[nalEnd] == 0.toByte() &&
+                    frameData[nalEnd + 1] == 0.toByte() &&
+                    frameData[nalEnd + 2] == 1.toByte())) {
                     break
                 }
                 nalEnd++
@@ -211,7 +184,7 @@ class RTPSender(
 
             val nalSize = nalEnd - nalStart
             if (nalSize > 0) {
-                nalOffsets[nalCount] = nalStart  // Relative offset (not absolute)
+                nalOffsets[nalCount] = nalStart  // Relative offset within frameData
                 nalSizes[nalCount] = nalSize
                 nalCount++
             }
@@ -219,13 +192,8 @@ class RTPSender(
             offset = nalEnd
         }
 
-        // Debug logging (first 10 frames only to avoid spam)
-        if (packetsSent < 600) { // ~10 frames at 60fps
-            Log.d(TAG, "Parsed frame: pos=$startPosition size=$bufferSize NALs=$nalCount")
-        }
-
         // Warn if we're truncating NAL units (indicates buffer too small)
-        if (nalCount >= maxNalUnits && offset < bufferSize) {
+        if (nalCount >= maxNalUnits && offset < frameSize) {
             Log.w(TAG, "NAL limit reached! Found $nalCount NALs but more data remains. Increase maxNalUnits.")
         }
     }
@@ -348,8 +316,8 @@ class RTPSender(
     }
 
     /**
-     * Dedicated sender thread - pulls parsed frames from queue and sends packets.
-     * Runs in parallel with parsing, allowing parser to stay ahead of sender.
+     * Dedicated sender thread - pulls raw frames, parses NALs, and sends packets.
+     * Parsing on this thread keeps EncoderSender thread fast (<1ms per frame).
      */
     private inner class SenderRunnable : Runnable {
         override fun run() {
@@ -358,8 +326,8 @@ class RTPSender(
 
             while (senderRunning.get() || !sendQueue.isEmpty()) {
                 try {
-                    // Wait for parsed frame (blocking with timeout)
-                    val parsed = sendQueue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
+                    // Wait for raw frame (blocking with timeout)
+                    val rawFrame = sendQueue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
                         ?: continue
 
                     val sock = socket ?: break
@@ -368,26 +336,36 @@ class RTPSender(
                     val startTime = System.nanoTime()
                     val packetsBefore = packetsSent
 
+                    // Parse NAL units on sender thread (keeps EncoderSender fast)
+                    val parseStart = System.nanoTime()
+                    parseNalUnits(rawFrame.frameData)
+                    val parseTime = (System.nanoTime() - parseStart) / 1_000_000
+
+                    if (nalCount == 0) {
+                        Log.w(TAG, "Frame has no NAL units, skipping")
+                        continue
+                    }
+
                     // Send all NAL units for this frame
-                    for (i in 0 until parsed.nalCount) {
-                        val isLastNal = (i == parsed.nalCount - 1)
-                        val nalOffset = parsed.nalOffsets[i]
-                        val nalSize = parsed.nalSizes[i]
+                    for (i in 0 until nalCount) {
+                        val isLastNal = (i == nalCount - 1)
+                        val nalOffset = nalOffsets[i]
+                        val nalSize = nalSizes[i]
 
                         if (nalSize <= MTU - RTP_HEADER_SIZE) {
-                            sendSinglePacket(sock, addr, parsed.frameData, nalOffset, nalSize, parsed.rtpTimestamp, isLastNal)
+                            sendSinglePacket(sock, addr, rawFrame.frameData, nalOffset, nalSize, rawFrame.rtpTimestamp, isLastNal)
                         } else {
-                            sendFragmentedNal(sock, addr, parsed.frameData, nalOffset, nalSize, parsed.rtpTimestamp, isLastNal)
+                            sendFragmentedNal(sock, addr, rawFrame.frameData, nalOffset, nalSize, rawFrame.rtpTimestamp, isLastNal)
                         }
                     }
 
                     framesSent++
-                    val sendTimeMs = (System.nanoTime() - startTime) / 1_000_000
+                    val totalTimeMs = (System.nanoTime() - startTime) / 1_000_000
                     val packetsThisFrame = packetsSent - packetsBefore
 
                     // Log first 20 frames and every 60th frame thereafter
                     if (framesSent <= 20 || framesSent % 60 == 0) {
-                        Log.d(TAG, "Sent frame $framesSent: ${parsed.frameData.size} bytes, $packetsThisFrame packets, ${sendTimeMs}ms, queue=${sendQueue.size}")
+                        Log.d(TAG, "Sent frame $framesSent: ${rawFrame.frameData.size}b, parse=${parseTime}ms, total=${totalTimeMs}ms, ${packetsThisFrame}pkts, queue=${sendQueue.size}")
                     }
                 } catch (e: InterruptedException) {
                     Log.i(TAG, "Sender thread interrupted")
