@@ -89,12 +89,16 @@ class RTPSender(
             socket?.trafficClass = 0x10
 
             // Start dedicated sender thread
+            Log.i(TAG, "Starting sender thread setup...")
             senderRunning.set(true)
+            Log.i(TAG, "senderRunning set to true")
             senderThread = Thread(SenderRunnable(), "RTP-Sender").apply {
+                Log.i(TAG, "Thread object created, setting priority and starting...")
                 priority = Thread.MAX_PRIORITY
                 start()
+                Log.i(TAG, "Thread.start() called")
             }
-            Log.i(TAG, "RTP sender thread started")
+            Log.i(TAG, "RTP sender thread started successfully, thread=$senderThread")
         } catch (e: Exception) {
             Log.e(TAG, "RTP start failed", e)
             throw e
