@@ -254,8 +254,10 @@ class H265Encoder(
                 val index = ring.poll()
 
                 if (index == -1) {
-                    // Sleep briefly instead of busy-wait to avoid burning CPU
-                    Thread.sleep(1)  // 1ms is acceptable latency for streaming
+                    // Sleep for ~half frame interval to avoid busy-wait
+                    // At 60fps frames arrive every 16.7ms, so sleeping 8ms means
+                    // we wake up ~2 times per frame instead of spinning constantly
+                    Thread.sleep(8)
                     continue
                 }
 
