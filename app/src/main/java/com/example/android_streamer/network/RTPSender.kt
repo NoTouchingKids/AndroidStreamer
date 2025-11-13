@@ -293,14 +293,6 @@ class RTPSender(
                 bytesSent += packet.length
                 sequenceNumber = (sequenceNumber + 1) and 0xFFFF
 
-                // Packet pacing: Small delay to avoid overwhelming WiFi/router buffers
-                // At 60fps with ~500 packets per I-frame, we want to spread over ~15ms
-                // Adding 30µs per packet would give 15ms total, but Thread.sleep() has
-                // millisecond precision, so we yield to scheduler occasionally instead
-                if (fragmentIndex % 10 == 0) {
-                    Thread.sleep(0)  // Hint scheduler to switch, adds ~10-100µs
-                }
-
                 payloadOffset += fragmentSize
                 fragmentIndex++
 
