@@ -48,7 +48,7 @@ class RTPSender(
         val isKeyFrame: Boolean
     )
 
-    private val sendQueue = ArrayBlockingQueue<RawFrame>(24)  // 24 frames = ~400ms buffer for high bitrate 4K60
+    private val sendQueue = ArrayBlockingQueue<RawFrame>(48)  // 48 frames = ~800ms buffer to handle I-frame spikes at 500 Mbps
     private var senderThread: Thread? = null
     private val senderRunning = AtomicBoolean(false)
 

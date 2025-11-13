@@ -51,7 +51,7 @@ class H265Encoder(
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
             setInteger(MediaFormat.KEY_FRAME_RATE, frameRate)
-            setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, 0.1f)  // 100ms = ~6 frames at 60fps for low latency
+            setFloat(MediaFormat.KEY_I_FRAME_INTERVAL, 0.5f)  // 500ms = ~30 frames at 60fps, reduces I-frame bitrate spikes
             setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.HEVCProfileMain)
             setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.HEVCMainTierLevel51)
             setInteger(MediaFormat.KEY_PRIORITY, 0)
