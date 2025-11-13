@@ -8,15 +8,14 @@
     tools:context=".MainActivity">
 
     <!-- Camera Preview -->
-    <androidx.camera.view.PreviewView
-        android:id="@+id/previewView"
+    <SurfaceView
+        android:id="@+id/previewSurface"
         android:layout_width="0dp"
         android:layout_height="0dp"
         app:layout_constraintBottom_toTopOf="@+id/statsContainer"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent"
-        app:scaleType="fillCenter" />
+        app:layout_constraintTop_toTopOf="parent" />
 
     <!-- Stats Overlay -->
     <LinearLayout
@@ -26,15 +25,26 @@
         android:background="#AA000000"
         android:orientation="vertical"
         android:padding="16dp"
-        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintBottom_toTopOf="@+id/controlButtons"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">
+
+        <TextView
+            android:id="@+id/tvStatus"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Status: Stopped"
+            android:textColor="#AAAAAA"
+            android:textSize="16sp"
+            android:fontFamily="monospace"
+            android:textStyle="bold" />
 
         <TextView
             android:id="@+id/tvFrameCount"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Frames: 0"
+            android:layout_marginTop="8dp"
+            android:text="Encoded: 0 (0 I-frames)"
             android:textColor="#FFFFFF"
             android:textSize="14sp"
             android:fontFamily="monospace" />
@@ -54,7 +64,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Buffer: 0/120"
+            android:text="Ring: 0/32"
             android:textColor="#51CF66"
             android:textSize="14sp"
             android:fontFamily="monospace" />
@@ -64,10 +74,45 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="FPS: 0.0"
+            android:text="Camera: 0 frames"
             android:textColor="#FFD93D"
             android:textSize="14sp"
             android:fontFamily="monospace" />
+    </LinearLayout>
+
+    <!-- Control Buttons -->
+    <LinearLayout
+        android:id="@+id/controlButtons"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#DD000000"
+        android:orientation="horizontal"
+        android:padding="16dp"
+        android:gravity="center"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <Button
+            android:id="@+id/btnStart"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="8dp"
+            android:text="START CAPTURE"
+            android:textSize="16sp"
+            android:backgroundTint="#51CF66" />
+
+        <Button
+            android:id="@+id/btnStop"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:text="STOP CAPTURE"
+            android:textSize="16sp"
+            android:enabled="false"
+            android:backgroundTint="#FF6B6B" />
     </LinearLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

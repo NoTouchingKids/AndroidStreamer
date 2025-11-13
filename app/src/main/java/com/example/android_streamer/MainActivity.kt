@@ -6,98 +6,187 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.example.android_streamer.buffer.RingBuffer
-import com.example.android_streamer.camera.CameraController
+import com.example.android_streamer.camera.Camera2Controller
 import com.example.android_streamer.databinding.ActivityMainBinding
+import com.example.android_streamer.encoder.H265Encoder
+import com.example.android_streamer.network.RTPSender
+import com.example.android_streamer.network.RTSPClient
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
-    private lateinit var cameraController: CameraController
+    private lateinit var cameraController: Camera2Controller
+    private lateinit var encoder: H265Encoder
+    private var rtpSender: RTPSender? = null
+    private var rtspClient: RTSPClient? = null
 
     private val handler = Handler(Looper.getMainLooper())
-    private var lastFrameTime = 0L
-    private var frameCountForFps = 0
+
+    private var encoderSurfaceReady = false
+    private var encoderSurface: android.view.Surface? = null
+    private var isCapturing = false
+
+    private val targetWidth = 1920
+    private val targetHeight = 1080
+    private var targetFps = 60
+
+    companion object {
+        private const val TAG = "AndroidStreamer"
+        private const val REQUEST_CODE_PERMISSIONS = 10
+        private val REQUIRED_PERMISSIONS = arrayOf(Manifest.permission.CAMERA)
+
+        private const val MEDIAMTX_SERVER_IP = "192.168.0.2"
+        private const val MEDIAMTX_RTSP_PORT = 8554
+        private const val STREAM_PATH = "/android"
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Initialize camera controller
-        cameraController = CameraController(this, this)
+        cameraController = Camera2Controller(this)
+        targetFps = cameraController.getMaxSupportedFps(targetWidth, targetHeight)
 
-        // Check and request camera permissions
-        if (allPermissionsGranted()) {
-            startCamera()
-        } else {
-            ActivityCompat.requestPermissions(
-                this,
-                REQUIRED_PERMISSIONS,
-                REQUEST_CODE_PERMISSIONS
-            )
+        rtspClient = RTSPClient(MEDIAMTX_SERVER_IP, MEDIAMTX_RTSP_PORT, STREAM_PATH)
+        rtpSender = RTPSender(MEDIAMTX_SERVER_IP, 0, rtspClient!!.getClientRtpPort())
+
+        rtspClient?.onReadyToStream = { serverIp, serverPort ->
+            rtpSender?.updateDestination(serverIp, serverPort)
+            rtpSender?.let {
+                try {
+                    it.start()
+                } catch (e: Exception) {
+                    Log.e(TAG, "RTP start failed", e)
+                }
+            }
+            runOnUiThread { updateStatus("Streaming") }
         }
 
-        // Start stats update loop
+        encoder = H265Encoder(
+            width = targetWidth,
+            height = targetHeight,
+            bitrate = 50_000_000,
+            frameRate = targetFps,
+            rtpSender = rtpSender
+        )
+
+        binding.btnStart.setOnClickListener { startCapture() }
+        binding.btnStop.setOnClickListener { stopCapture() }
+
+        if (allPermissionsGranted()) {
+            initializeEncoder()
+        } else {
+            ActivityCompat.requestPermissions(this, REQUIRED_PERMISSIONS, REQUEST_CODE_PERMISSIONS)
+        }
+
         startStatsUpdater()
     }
 
-    private fun startCamera() {
-        cameraController.startCamera(binding.previewView) { readSlot ->
-            // Frame callback - this is where we'd send to encoder/network
-            processFrame(readSlot)
-        }
-        Log.i(TAG, "Camera started")
-    }
-
-    private fun processFrame(readSlot: RingBuffer.ReadSlot) {
-        // Calculate FPS
-        val currentTime = System.currentTimeMillis()
-        if (lastFrameTime == 0L) {
-            lastFrameTime = currentTime
-        }
-
-        frameCountForFps++
-
-        // Update FPS every second
-        val elapsed = currentTime - lastFrameTime
-        if (elapsed >= 1000) {
-            val fps = (frameCountForFps * 1000.0) / elapsed
-            lastFrameTime = currentTime
-            frameCountForFps = 0
-
-            // Update UI on main thread
-            handler.post {
-                binding.tvFps.text = String.format("FPS: %.1f", fps)
+    private fun initializeEncoder() {
+        encoder.onCodecDataReady = { vps, sps, pps ->
+            rtspClient?.let { client ->
+                client.setStreamParameters(targetWidth, targetHeight, targetFps, sps, pps)
+                try {
+                    client.connect()
+                } catch (e: Exception) {
+                    Log.e(TAG, "RTSP connect failed", e)
+                }
             }
         }
 
-        // TODO: Send frame to encoder/RTP packetizer
-        Log.v(TAG, "Frame received: ${readSlot.frameSize} bytes, timestamp: ${readSlot.timestampNs}")
+        encoderSurface = encoder.start()
+        encoderSurfaceReady = true
+        updateStatus("Ready")
+    }
+
+    private fun startCapture() {
+        if (isCapturing) return
+
+        val surface = encoderSurface ?: run {
+            Log.e(TAG, "Encoder surface null")
+            return
+        }
+
+        if (!surface.isValid) {
+            Log.e(TAG, "Encoder surface invalid")
+            return
+        }
+
+        cameraController.start(
+            encoderSurface = surface,
+            width = targetWidth,
+            height = targetHeight,
+            fps = targetFps
+        )
+
+        isCapturing = true
+        binding.btnStart.isEnabled = false
+        binding.btnStop.isEnabled = true
+        updateStatus("Capturing")
+    }
+
+    private fun stopCapture() {
+        if (!isCapturing) return
+
+        cameraController.stop()
+        encoder.stop()
+        rtpSender?.stop()
+        rtspClient?.disconnect()
+
+        isCapturing = false
+
+        rtspClient = RTSPClient(MEDIAMTX_SERVER_IP, MEDIAMTX_RTSP_PORT, STREAM_PATH)
+        rtpSender = RTPSender(MEDIAMTX_SERVER_IP, 0, rtspClient!!.getClientRtpPort())
+
+        rtspClient?.onReadyToStream = { serverIp, serverPort ->
+            rtpSender?.updateDestination(serverIp, serverPort)
+            rtpSender?.let {
+                try {
+                    it.start()
+                } catch (e: Exception) {
+                    Log.e(TAG, "RTP restart failed", e)
+                }
+            }
+            runOnUiThread { updateStatus("Streaming") }
+        }
+
+        encoder = H265Encoder(
+            width = targetWidth,
+            height = targetHeight,
+            bitrate = 50_000_000,
+            frameRate = targetFps,
+            rtpSender = rtpSender
+        )
+        initializeEncoder()
+
+        binding.btnStart.isEnabled = true
+        binding.btnStop.isEnabled = false
+        updateStatus("Ready")
+    }
+
+    private fun updateStatus(status: String) {
+        runOnUiThread { binding.tvStatus.text = "Status: $status" }
     }
 
     private fun startStatsUpdater() {
         val updateRunnable = object : Runnable {
             override fun run() {
-                val stats = cameraController.getStats()
-                val dropRate = if (stats.totalFrames > 0) {
-                    (stats.droppedFrames.toFloat() / stats.totalFrames) * 100
+                val stats = encoder.getStats()
+                val totalFrames = stats.encodedFrames + stats.droppedFrames
+                val dropRate = if (totalFrames > 0) {
+                    (stats.droppedFrames.toFloat() / totalFrames) * 100
                 } else {
                     0f
                 }
 
-                binding.tvFrameCount.text = "Frames: ${stats.totalFrames}"
-                binding.tvDroppedFrames.text = String.format(
-                    "Dropped: %d (%.2f%%)",
-                    stats.droppedFrames,
-                    dropRate
-                )
-                binding.tvBufferOccupancy.text = "Buffer: ${stats.bufferOccupancy}/120"
+                binding.tvFrameCount.text = "Encoded: ${stats.encodedFrames}"
+                binding.tvDroppedFrames.text = String.format("Dropped: %d (%.1f%%)", stats.droppedFrames, dropRate)
+                binding.tvBufferOccupancy.text = "Ring: ${stats.ringOccupancy}/32"
+                binding.tvFps.text = "FPS: ${cameraController.getStats().capturedFrames}"
 
-                // Update every 500ms
                 handler.postDelayed(this, 500)
             }
         }
@@ -116,13 +205,8 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_CODE_PERMISSIONS) {
             if (allPermissionsGranted()) {
-                startCamera()
+                initializeEncoder()
             } else {
-                Toast.makeText(
-                    this,
-                    "Camera permissions are required to use this app",
-                    Toast.LENGTH_LONG
-                ).show()
                 finish()
             }
         }
@@ -130,13 +214,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        cameraController.stopCamera()
+        if (isCapturing) {
+            stopCapture()
+        }
+        rtpSender?.stop()
+        rtspClient?.disconnect()
+        cameraController.release()
         handler.removeCallbacksAndMessages(null)
-    }
-
-    companion object {
-        private const val TAG = "MainActivity"
-        private const val REQUEST_CODE_PERMISSIONS = 10
-        private val REQUIRED_PERMISSIONS = arrayOf(Manifest.permission.CAMERA)
     }
 }

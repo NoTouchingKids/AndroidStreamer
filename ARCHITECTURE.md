@@ -131,29 +131,41 @@ Camera2 Surface → MediaCodec Input Surface → Encoded H.265 → RTP Packetize
 
 ### Ring Buffer Sizing
 
-For **1080p@60fps** with H.265 encoding:
+For **1080p@60fps** with **raw YUV 4:2:0 data** (current implementation):
 
 ```kotlin
 companion object {
     fun createFor1080p60(): RingBuffer {
-        val bufferSize = 200 * 1024 // 200KB per buffer
-        val capacity = 120 // 2 seconds @ 60fps
+        val width = 1920
+        val height = 1080
+        // YUV 4:2:0 format: Y plane + U plane (1/4) + V plane (1/4)
+        val bufferSize = (width * height * 3) / 2 // 3,110,400 bytes
+        val capacity = 30 // 0.5 seconds @ 60fps
         return RingBuffer(capacity, bufferSize)
     }
 }
 ```
 
-**Calculations:**
-- **I-frame size estimate**: 1920×1080 × 0.075 bpp ≈ 150KB
-- **Buffer size**: 200KB (safety margin)
-- **Total memory**: 200KB × 120 = 24MB (off-heap)
+**Current Calculations (Raw YUV):**
+- **Y plane**: 1920×1080 = 2,073,600 bytes
+- **U plane**: 960×540 = 518,400 bytes (quarter resolution)
+- **V plane**: 960×540 = 518,400 bytes (quarter resolution)
+- **Total per frame**: 3,110,400 bytes ≈ **3.1 MB**
+- **Buffer size**: 3.1 MB × 30 frames = **~93 MB (off-heap)**
 
-### Why 120 Frames (2 Seconds)?
+**Future Calculations (Encoded H.265):**
+Once MediaCodec input surface is implemented:
+- **I-frame size**: ~150KB (1920×1080 × 0.075 bpp)
+- **Buffer size**: 200KB × 120 frames = **~24 MB (off-heap)**
+- **Memory savings**: 93 MB → 24 MB (74% reduction)
 
-- Provides buffer headroom for encoding/network jitter
-- 2 seconds allows encoder to catch up during brief CPU spikes
-- Small enough to avoid excessive memory usage
+### Why 30 Frames (0.5 Seconds)?
+
+- **Current**: 30 frames keeps memory usage reasonable for raw YUV (93 MB vs 372 MB for 120 frames)
+- Provides sufficient headroom for encoding/network jitter
+- 0.5 seconds allows encoder to catch up during brief CPU spikes
 - Large enough to absorb typical Android frame scheduling variance
+- **Future**: Can increase to 120 frames (2 seconds) once using encoded frames
 
 ---
 
