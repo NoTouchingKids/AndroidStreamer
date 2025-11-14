@@ -18,6 +18,56 @@
         app:layout_constraintTop_toTopOf="parent"
         app:scaleType="fillCenter" />
 
+    <!-- Streaming Controls -->
+    <LinearLayout
+        android:id="@+id/controlsContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#DD000000"
+        android:orientation="vertical"
+        android:padding="16dp"
+        app:layout_constraintBottom_toTopOf="@+id/statsContainer"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Streaming Configuration"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <EditText
+            android:id="@+id/etRemoteHost"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="Remote Host (e.g., 192.168.1.100)"
+            android:text="192.168.1.100"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#888888"
+            android:inputType="text" />
+
+        <EditText
+            android:id="@+id/etRemotePort"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:hint="Remote Port (e.g., 5004)"
+            android:text="5004"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#888888"
+            android:inputType="number" />
+
+        <Button
+            android:id="@+id/btnStartStop"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Start Streaming" />
+    </LinearLayout>
+
     <!-- Stats Overlay -->
     <LinearLayout
         android:id="@+id/statsContainer"
@@ -31,40 +81,41 @@
         app:layout_constraintStart_toStartOf="parent">
 
         <TextView
-            android:id="@+id/tvFrameCount"
+            android:id="@+id/tvStatus"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Frames: 0"
+            android:text="Status: Stopped"
+            android:textColor="#FF6B6B"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace" />
+
+        <TextView
+            android:id="@+id/tvRtpPackets"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="RTP Packets: 0 (0 KB)"
             android:textColor="#FFFFFF"
             android:textSize="14sp"
             android:fontFamily="monospace" />
 
         <TextView
-            android:id="@+id/tvDroppedFrames"
+            android:id="@+id/tvUdpPackets"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="Dropped: 0 (0.00%)"
-            android:textColor="#FF6B6B"
-            android:textSize="14sp"
-            android:fontFamily="monospace" />
-
-        <TextView
-            android:id="@+id/tvBufferOccupancy"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="Buffer: 0/120"
+            android:text="UDP Sent: 0 (0 KB)"
             android:textColor="#51CF66"
             android:textSize="14sp"
             android:fontFamily="monospace" />
 
         <TextView
-            android:id="@+id/tvFps"
+            android:id="@+id/tvErrors"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="FPS: 0.0"
+            android:text="Errors: 0"
             android:textColor="#FFD93D"
             android:textSize="14sp"
             android:fontFamily="monospace" />

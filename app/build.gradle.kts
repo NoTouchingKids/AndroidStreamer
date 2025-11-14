@@ -11,7 +11,7 @@ android {
 
     defaultConfig {
         applicationId = "com.example.android_streamer"
-        minSdk = 29
+        minSdk = 31  // Android 12 - aggressive hardware optimizations
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"

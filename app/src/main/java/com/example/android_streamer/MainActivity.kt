@@ -2,38 +2,42 @@ package com.example.android_streamer
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.widget.Toast
+import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.example.android_streamer.buffer.RingBuffer
-import com.example.android_streamer.camera.CameraController
 import com.example.android_streamer.databinding.ActivityMainBinding
 
+@RequiresApi(Build.VERSION_CODES.S)
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
-    private lateinit var cameraController: CameraController
+    private var streamingPipeline: StreamingPipeline? = null
 
     private val handler = Handler(Looper.getMainLooper())
-    private var lastFrameTime = 0L
-    private var frameCountForFps = 0
+    private var isStreaming = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // Initialize camera controller
-        cameraController = CameraController(this, this)
+        // Setup button listener
+        binding.btnStartStop.setOnClickListener {
+            if (isStreaming) {
+                stopStreaming()
+            } else {
+                startStreaming()
+            }
+        }
 
         // Check and request camera permissions
-        if (allPermissionsGranted()) {
-            startCamera()
-        } else {
+        if (!allPermissionsGranted()) {
             ActivityCompat.requestPermissions(
                 this,
                 REQUIRED_PERMISSIONS,
@@ -41,61 +45,98 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        // Start stats update loop
+        // Start stats updater
         startStatsUpdater()
     }
 
-    private fun startCamera() {
-        cameraController.startCamera(binding.previewView) { readSlot ->
-            // Frame callback - this is where we'd send to encoder/network
-            processFrame(readSlot)
+    private fun startStreaming() {
+        if (!allPermissionsGranted()) {
+            Toast.makeText(this, "Camera permission required", Toast.LENGTH_SHORT).show()
+            return
         }
-        Log.i(TAG, "Camera started")
+
+        try {
+            val remoteHost = binding.etRemoteHost.text.toString()
+            val remotePort = binding.etRemotePort.text.toString().toIntOrNull() ?: 5004
+
+            if (remoteHost.isEmpty()) {
+                Toast.makeText(this, "Please enter remote host", Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            Log.i(TAG, "Starting streaming to $remoteHost:$remotePort")
+
+            // Create streaming configuration
+            val config = StreamingPipeline.StreamingConfig(
+                resolution = StreamingPipeline.Resolution.HD_1080P, // Start with 1080p
+                frameRate = 60,
+                remoteHost = remoteHost,
+                remotePort = remotePort
+            )
+
+            // Create and start pipeline
+            streamingPipeline = StreamingPipeline(this, config).apply {
+                start()
+            }
+
+            isStreaming = true
+            binding.btnStartStop.text = "Stop Streaming"
+            binding.tvStatus.text = "Status: Streaming"
+            binding.tvStatus.setTextColor(getColor(android.R.color.holo_green_light))
+
+            Toast.makeText(this, "Streaming started", Toast.LENGTH_SHORT).show()
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start streaming", e)
+            Toast.makeText(this, "Failed to start: ${e.message}", Toast.LENGTH_LONG).show()
+            stopStreaming()
+        }
     }
 
-    private fun processFrame(readSlot: RingBuffer.ReadSlot) {
-        // Calculate FPS
-        val currentTime = System.currentTimeMillis()
-        if (lastFrameTime == 0L) {
-            lastFrameTime = currentTime
+    private fun stopStreaming() {
+        try {
+            streamingPipeline?.stop()
+            streamingPipeline = null
+
+            isStreaming = false
+            binding.btnStartStop.text = "Start Streaming"
+            binding.tvStatus.text = "Status: Stopped"
+            binding.tvStatus.setTextColor(getColor(android.R.color.holo_red_light))
+
+            Toast.makeText(this, "Streaming stopped", Toast.LENGTH_SHORT).show()
+
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping streaming", e)
         }
-
-        frameCountForFps++
-
-        // Update FPS every second
-        val elapsed = currentTime - lastFrameTime
-        if (elapsed >= 1000) {
-            val fps = (frameCountForFps * 1000.0) / elapsed
-            lastFrameTime = currentTime
-            frameCountForFps = 0
-
-            // Update UI on main thread
-            handler.post {
-                binding.tvFps.text = String.format("FPS: %.1f", fps)
-            }
-        }
-
-        // TODO: Send frame to encoder/RTP packetizer
-        Log.v(TAG, "Frame received: ${readSlot.frameSize} bytes, timestamp: ${readSlot.timestampNs}")
     }
 
     private fun startStatsUpdater() {
         val updateRunnable = object : Runnable {
             override fun run() {
-                val stats = cameraController.getStats()
-                val dropRate = if (stats.totalFrames > 0) {
-                    (stats.droppedFrames.toFloat() / stats.totalFrames) * 100
-                } else {
-                    0f
-                }
+                streamingPipeline?.let { pipeline ->
+                    val stats = pipeline.getStatistics()
 
-                binding.tvFrameCount.text = "Frames: ${stats.totalFrames}"
-                binding.tvDroppedFrames.text = String.format(
-                    "Dropped: %d (%.2f%%)",
-                    stats.droppedFrames,
-                    dropRate
-                )
-                binding.tvBufferOccupancy.text = "Buffer: ${stats.bufferOccupancy}/120"
+                    binding.tvRtpPackets.text = String.format(
+                        "RTP Packets: %d (%d KB)",
+                        stats.rtpPackets,
+                        stats.rtpBytes / 1024
+                    )
+
+                    binding.tvUdpPackets.text = String.format(
+                        "UDP Sent: %d (%d KB)",
+                        stats.udpPackets,
+                        stats.udpBytes / 1024
+                    )
+
+                    binding.tvErrors.text = "Errors: ${stats.udpErrors}"
+
+                    // Update error text color
+                    if (stats.udpErrors > 0) {
+                        binding.tvErrors.setTextColor(getColor(android.R.color.holo_red_light))
+                    } else {
+                        binding.tvErrors.setTextColor(getColor(android.R.color.holo_green_light))
+                    }
+                }
 
                 // Update every 500ms
                 handler.postDelayed(this, 500)
@@ -115,9 +156,7 @@ class MainActivity : AppCompatActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == REQUEST_CODE_PERMISSIONS) {
-            if (allPermissionsGranted()) {
-                startCamera()
-            } else {
+            if (!allPermissionsGranted()) {
                 Toast.makeText(
                     this,
                     "Camera permissions are required to use this app",
@@ -130,7 +169,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        cameraController.stopCamera()
+        stopStreaming()
         handler.removeCallbacksAndMessages(null)
     }
 

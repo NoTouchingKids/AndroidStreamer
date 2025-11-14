@@ -210,14 +210,61 @@ adb logcat | grep "GC_"
 
 ---
 
+## Implemented Features (v2.0)
+
+### ✅ Complete Zero-Copy Pipeline
+
+The pipeline has been fully implemented with:
+
+1. **Camera2 API** for maximum control over frame rate and latency
+   - Direct surface rendering to encoder
+   - Locked 60fps frame rate via `CONTROL_AE_TARGET_FPS_RANGE`
+   - Hardware-accelerated path (GPU → Encoder)
+
+2. **MediaCodec HEVC Encoder** with input surface (true zero-copy)
+   - Hardware encoder detection via `MediaCodecList`
+   - CBR bitrate mode for consistent throughput
+   - Low-latency configuration (priority=0, latency=0)
+   - Performance class gating for 4K60 support
+
+3. **RTP Packetizer** (RFC 7798) for H.265/HEVC
+   - Single NAL Unit Packets for small NALUs
+   - Fragmentation Units (FU) for large NALUs
+   - Zero-allocation packet generation
+   - Proper RTP header with sequence numbers and timestamps
+
+4. **UDP Sender** with DatagramChannel
+   - Non-blocking DatagramChannel
+   - Direct ByteBuffers (off-heap)
+   - Single-threaded sender with packet queue
+   - Fire-and-forget semantics
+
+### Complete Data Flow
+
+```
+Camera2 (1080p@60fps)
+  ↓ (Surface - GPU)
+MediaCodec HEVC Encoder (Hardware)
+  ↓ (ByteBuffer - encoded NALUs)
+RTP Packetizer
+  ↓ (RTP packets in DirectByteBuffer)
+UDP Sender (DatagramChannel)
+  ↓ (Network)
+Remote Receiver (MediaMTX, FFmpeg, etc.)
+```
+
+**Zero Copy Achieved:**
+- Camera → Encoder: GPU surface (zero copy)
+- Encoder → Packetizer: ByteBuffer reference (zero copy)
+- Packetizer → Sender: DirectByteBuffer reuse (zero allocation)
+
 ## Next Steps
 
-1. **Integrate MediaCodec H.265 encoder** with input surface (true zero-copy)
-2. **Implement RTP packetizer** (RFC 7798) for H.265/RTP
-3. **Add RTSP publisher** for MediaMTX integration
-4. **Benchmark end-to-end latency** with systrace
-5. **Profile memory allocations** during steady-state capture
-6. **Test on multiple device chipsets** (Qualcomm, MediaTek, Exynos)
+1. **Add RTSP signaling** for MediaMTX integration (SDP exchange)
+2. **Benchmark end-to-end latency** with systrace
+3. **Profile memory allocations** during steady-state capture
+4. **Test on multiple device chipsets** (Qualcomm, MediaTek, Exynos)
+5. **Add adaptive bitrate control** based on network feedback
 
 ---
 
