@@ -7,17 +7,32 @@ import java.nio.ByteBuffer
 /**
  * RTP packetizer for H.265/HEVC video according to RFC 7798.
  *
+ * Threading model:
+ * - This class is designed for SINGLE-THREADED use
+ * - Should only be called from MediaCodec encoder callback thread
+ * - NOT thread-safe for concurrent calls to packetize()
+ * - Reuses internal buffer (packetBuffer) across calls for zero-allocation
+ *
+ * MediaMTX compatibility:
+ * - Generates RFC 7798 compliant RTP packets for H.265
+ * - Supports NAL unit fragmentation for MTU compliance
+ * - Uses 90kHz RTP timestamp clock (standard for video)
+ * - Payload type 96 (dynamic) - configure MediaMTX accordingly
+ *
  * Supports:
  * - Single NAL Unit Packets (small NALUs)
- * - Fragmentation Units (FU) for large NALUs
- * - RTP header generation with sequence numbers and timestamps
+ * - Fragmentation Units (FU) for large NALUs (>1400 bytes)
+ * - Proper RTP sequencing and timestamping
  */
 class RTPPacketizer(
     private val ssrc: Int = (0..Int.MAX_VALUE).random(), // Synchronization source identifier
     private val payloadType: Int = 96 // Dynamic payload type for H.265
 ) {
-    // RTP state
+    // RTP state (mutable - not thread-safe)
+    @Volatile  // For visibility when reading stats from other threads
     private var sequenceNumber: Int = (0..0xFFFF).random()
+
+    @Volatile
     private var timestamp: Long = 0L
 
     // MTU - Maximum Transmission Unit (typical Ethernet MTU minus IP/UDP headers)

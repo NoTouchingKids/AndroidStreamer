@@ -172,7 +172,12 @@ class StreamingPipeline(
 
         sender?.let { snd ->
             val stats = snd.getStats()
-            Log.i(TAG, "UDP Sender: ${stats.packetsSent} packets, ${stats.bytesSent / 1024}KB, ${stats.sendErrors} errors")
+            Log.i(TAG, "UDP Sender: ${stats.packetsSent} packets, ${stats.bytesSent / 1024}KB, " +
+                    "Dropped: ${stats.packetsDropped}, Errors: ${stats.sendErrors}")
+
+            if (!snd.isHealthy()) {
+                Log.w(TAG, "WARNING: UDP sender health check failed - high drop/error rate")
+            }
         }
     }
 
@@ -188,8 +193,17 @@ class StreamingPipeline(
             rtpBytes = packetizerStats?.totalBytes ?: 0,
             udpPackets = senderStats?.packetsSent ?: 0,
             udpBytes = senderStats?.bytesSent ?: 0,
-            udpErrors = senderStats?.sendErrors ?: 0
+            udpErrors = senderStats?.sendErrors ?: 0,
+            udpDropped = senderStats?.packetsDropped ?: 0,
+            queueOccupancy = senderStats?.queueOccupancy ?: 0
         )
+    }
+
+    /**
+     * Check if pipeline is healthy (low error/drop rates).
+     */
+    fun isHealthy(): Boolean {
+        return sender?.isHealthy() ?: false
     }
 
     /**
@@ -223,7 +237,9 @@ class StreamingPipeline(
         val rtpBytes: Long,
         val udpPackets: Long,
         val udpBytes: Long,
-        val udpErrors: Long
+        val udpErrors: Long,
+        val udpDropped: Long,
+        val queueOccupancy: Int
     )
 
     companion object {

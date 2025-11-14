@@ -123,15 +123,29 @@ class MainActivity : AppCompatActivity() {
                     )
 
                     binding.tvUdpPackets.text = String.format(
-                        "UDP Sent: %d (%d KB)",
+                        "UDP Sent: %d (%d KB) | Queue: %d/512",
                         stats.udpPackets,
-                        stats.udpBytes / 1024
+                        stats.udpBytes / 1024,
+                        stats.queueOccupancy
                     )
 
-                    binding.tvErrors.text = "Errors: ${stats.udpErrors}"
+                    binding.tvErrors.text = String.format(
+                        "Dropped: %d | Errors: %d",
+                        stats.udpDropped,
+                        stats.udpErrors
+                    )
 
-                    // Update error text color
-                    if (stats.udpErrors > 0) {
+                    // Update status based on health
+                    if (pipeline.isHealthy()) {
+                        binding.tvStatus.text = "Status: Streaming (Healthy)"
+                        binding.tvStatus.setTextColor(getColor(android.R.color.holo_green_light))
+                    } else {
+                        binding.tvStatus.text = "Status: Streaming (Issues Detected)"
+                        binding.tvStatus.setTextColor(getColor(android.R.color.holo_orange_light))
+                    }
+
+                    // Update error text color based on drop/error rates
+                    if (stats.udpErrors > 0 || stats.udpDropped > stats.udpPackets / 100) {
                         binding.tvErrors.setTextColor(getColor(android.R.color.holo_red_light))
                     } else {
                         binding.tvErrors.setTextColor(getColor(android.R.color.holo_green_light))
