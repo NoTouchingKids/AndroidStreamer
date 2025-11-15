@@ -86,7 +86,6 @@ object SDPGenerator {
 
             // Video attributes
             append("a=framerate:$frameRate\r\n")
-            append("a=x-dimensions:$width,$height\r\n")
 
             // Track control URL - absolute if rtspUrl provided, otherwise relative
             if (rtspUrl != null) {
