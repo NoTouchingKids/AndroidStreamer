@@ -2,6 +2,7 @@ package com.example.android_streamer.camera
 
 import android.content.Context
 import android.util.Log
+import android.util.Range
 import android.util.Size
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -68,7 +69,8 @@ class CameraController(
         // Preview use case (lower frame rate to reduce overhead)
         preview = Preview.Builder()
             .setTargetResolution(Size(1920, 1080))
-            .setTargetFrameRate(Range(30, 30)) // Preview at 30fps to save resources
+            // Note: CameraX doesn't support setTargetFrameRate directly
+            // Frame rate is determined by camera hardware capabilities
             .build()
             .also {
                 it.setSurfaceProvider(previewView.surfaceProvider)
@@ -77,12 +79,13 @@ class CameraController(
         // ImageAnalysis use case for frame capture (1080p@60fps)
         imageAnalysis = ImageAnalysis.Builder()
             .setTargetResolution(Size(1920, 1080))
-            .setTargetFrameRate(Range(60, 60)) // Target 60fps
+            // Note: CameraX doesn't support setTargetFrameRate directly
+            // For precise FPS control, use Camera2Controller instead
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST) // Drop frames if processing is slow
             .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888) // YUV for encoder
             .build()
-            .also {
-                it.setAnalyzer(cameraExecutor) { image ->
+            .also { analysis ->
+                analysis.setAnalyzer(cameraExecutor) { image ->
                     processFrame(image)
                 }
             }

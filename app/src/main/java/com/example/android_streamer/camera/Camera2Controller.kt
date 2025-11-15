@@ -51,7 +51,8 @@ class Camera2Controller(private val context: Context) {
                 val fpsRanges = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
 
                 // Check if 4K resolution is supported
-                val has4K = map?.outputSizes?.any { size ->
+                val outputSizes = map?.getOutputSizes(android.graphics.SurfaceTexture::class.java)
+                val has4K = outputSizes?.any { size ->
                     size.width == 3840 && size.height == 2160
                 } ?: false
 
@@ -133,7 +134,8 @@ class Camera2Controller(private val context: Context) {
                 val fpsRanges = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
 
                 // Check resolution support
-                val supportsResolution = map?.outputSizes?.any { size ->
+                val outputSizes = map?.getOutputSizes(android.graphics.SurfaceTexture::class.java)
+                val supportsResolution = outputSizes?.any { size ->
                     size.width == width && size.height == height
                 } ?: false
 

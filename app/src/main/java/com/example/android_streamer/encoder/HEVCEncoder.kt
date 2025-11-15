@@ -55,8 +55,16 @@ class HEVCEncoder(
                 val capabilities = info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_HEVC)
                 val videoCapabilities = capabilities.videoCapabilities
 
-                videoCapabilities.isSizeSupported(width, height) &&
-                videoCapabilities.areFpsAndSizeSupported(frameRate.toDouble(), width, height)
+                val sizeSupported = videoCapabilities.isSizeSupported(width, height)
+                // Check if frame rate is supported for this resolution
+                val fpsRange = try {
+                    videoCapabilities.getSupportedFrameRatesFor(width, height)
+                } catch (e: Exception) {
+                    null
+                }
+                val fpsSupported = fpsRange?.contains(frameRate.toDouble()) ?: false
+
+                sizeSupported && fpsSupported
             }
     }
 
@@ -77,7 +85,7 @@ class HEVCEncoder(
         val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_HEVC, width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, bitrate)
-            setInteger(MediaFormat.KEY_BIT_RATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
+            setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR)
             setInteger(MediaFormat.KEY_FRAME_RATE, frameRate)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1) // I-frame every 1 second
 
