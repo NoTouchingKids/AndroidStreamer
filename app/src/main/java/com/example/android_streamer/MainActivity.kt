@@ -7,12 +7,15 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.View
 import android.widget.Toast
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.example.android_streamer.databinding.ActivityMainBinding
+import kotlinx.coroutines.launch
 
 @RequiresApi(Build.VERSION_CODES.S)
 class MainActivity : AppCompatActivity() {
@@ -36,6 +39,24 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // Setup RTSP checkbox listener
+        binding.cbUseRtsp.setOnCheckedChangeListener { _, isChecked ->
+            binding.etRtspPath.visibility = if (isChecked) View.VISIBLE else View.GONE
+
+            // Update port hint
+            if (isChecked) {
+                binding.etRemotePort.hint = "RTSP Port (e.g., 8554)"
+                if (binding.etRemotePort.text.toString() == "5004") {
+                    binding.etRemotePort.setText("8554")
+                }
+            } else {
+                binding.etRemotePort.hint = "RTP Port (e.g., 5004)"
+                if (binding.etRemotePort.text.toString() == "8554") {
+                    binding.etRemotePort.setText("5004")
+                }
+            }
+        }
+
         // Check and request camera permissions
         if (!allPermissionsGranted()) {
             ActivityCompat.requestPermissions(
@@ -55,41 +76,51 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        try {
-            val remoteHost = binding.etRemoteHost.text.toString()
-            val remotePort = binding.etRemotePort.text.toString().toIntOrNull() ?: 5004
+        lifecycleScope.launch {
+            try {
+                val remoteHost = binding.etRemoteHost.text.toString()
+                val remotePort = binding.etRemotePort.text.toString().toIntOrNull() ?: 5004
+                val useRtsp = binding.cbUseRtsp.isChecked
+                val rtspPath = binding.etRtspPath.text.toString().ifEmpty { "android" }
 
-            if (remoteHost.isEmpty()) {
-                Toast.makeText(this, "Please enter remote host", Toast.LENGTH_SHORT).show()
-                return
+                if (remoteHost.isEmpty()) {
+                    Toast.makeText(this@MainActivity, "Please enter remote host", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                val mode = if (useRtsp) "RTSP" else "Pure RTP/UDP"
+                Log.i(TAG, "Starting streaming ($mode) to $remoteHost:$remotePort")
+
+                // Create streaming configuration
+                val config = StreamingPipeline.StreamingConfig(
+                    resolution = StreamingPipeline.Resolution.HD_1080P, // Start with 1080p
+                    frameRate = 60,
+                    remoteHost = remoteHost,
+                    remotePort = remotePort,
+                    useRtsp = useRtsp,
+                    rtspPort = if (useRtsp) remotePort else 8554,
+                    rtspPath = rtspPath,
+                    rtpPort = if (useRtsp) 5004 else remotePort,  // For RTSP, use 5004 for RTP data
+                    rtcpPort = 5005
+                )
+
+                // Create and start pipeline (suspend function)
+                streamingPipeline = StreamingPipeline(this@MainActivity, config).apply {
+                    start()  // This is now a suspend function
+                }
+
+                isStreaming = true
+                binding.btnStartStop.text = "Stop Streaming"
+                binding.tvStatus.text = "Status: Streaming ($mode)"
+                binding.tvStatus.setTextColor(getColor(android.R.color.holo_green_light))
+
+                Toast.makeText(this@MainActivity, "Streaming started", Toast.LENGTH_SHORT).show()
+
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to start streaming", e)
+                Toast.makeText(this@MainActivity, "Failed to start: ${e.message}", Toast.LENGTH_LONG).show()
+                stopStreaming()
             }
-
-            Log.i(TAG, "Starting streaming to $remoteHost:$remotePort")
-
-            // Create streaming configuration
-            val config = StreamingPipeline.StreamingConfig(
-                resolution = StreamingPipeline.Resolution.HD_1080P, // Start with 1080p
-                frameRate = 60,
-                remoteHost = remoteHost,
-                remotePort = remotePort
-            )
-
-            // Create and start pipeline
-            streamingPipeline = StreamingPipeline(this, config).apply {
-                start()
-            }
-
-            isStreaming = true
-            binding.btnStartStop.text = "Stop Streaming"
-            binding.tvStatus.text = "Status: Streaming"
-            binding.tvStatus.setTextColor(getColor(android.R.color.holo_green_light))
-
-            Toast.makeText(this, "Streaming started", Toast.LENGTH_SHORT).show()
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start streaming", e)
-            Toast.makeText(this, "Failed to start: ${e.message}", Toast.LENGTH_LONG).show()
-            stopStreaming()
         }
     }
 

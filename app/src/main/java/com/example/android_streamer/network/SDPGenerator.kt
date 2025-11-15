@@ -1,0 +1,169 @@
+package com.example.android_streamer.network
+
+import android.util.Base64
+import java.net.InetAddress
+
+/**
+ * Generates SDP (Session Description Protocol) for RTSP ANNOUNCE
+ * Describes H.265/HEVC video stream parameters
+ */
+object SDPGenerator {
+
+    /**
+     * Generate SDP for H.265 stream
+     *
+     * @param clientAddress Our IP address (for o= and c= lines)
+     * @param rtpPort RTP data port (client port)
+     * @param width Video width
+     * @param height Video height
+     * @param frameRate Video frame rate
+     * @param payloadType RTP payload type (96 for dynamic)
+     * @param vps VPS (Video Parameter Set) from encoder (optional)
+     * @param sps SPS (Sequence Parameter Set) from encoder (optional)
+     * @param pps PPS (Picture Parameter Set) from encoder (optional)
+     */
+    fun generateH265SDP(
+        clientAddress: String = getLocalAddress(),
+        rtpPort: Int,
+        width: Int = 1920,
+        height: Int = 1080,
+        frameRate: Int = 60,
+        payloadType: Int = 96,
+        vps: ByteArray? = null,
+        sps: ByteArray? = null,
+        pps: ByteArray? = null
+    ): String {
+        val sessionId = System.currentTimeMillis()
+        val sessionVersion = sessionId
+
+        return buildString {
+            // Session description
+            appendLine("v=0")
+            appendLine("o=- $sessionId $sessionVersion IN IP4 $clientAddress")
+            appendLine("s=Android H.265 Stream")
+            appendLine("c=IN IP4 $clientAddress")
+            appendLine("t=0 0")
+            appendLine("a=tool:AndroidStreamer")
+            appendLine("a=type:broadcast")
+            appendLine("a=control:*")
+
+            // Media description
+            appendLine("m=video $rtpPort RTP/AVP $payloadType")
+            appendLine("b=AS:4000")  // 4 Mbps bandwidth
+
+            // RTP map for H.265
+            appendLine("a=rtpmap:$payloadType H265/90000")
+
+            // Format parameters
+            val fmtp = buildString {
+                append("a=fmtp:$payloadType")
+
+                // Add parameter sets if available
+                if (vps != null && sps != null && pps != null) {
+                    append(" sprop-vps=")
+                    append(Base64.encodeToString(vps, Base64.NO_WRAP))
+                    append(";sprop-sps=")
+                    append(Base64.encodeToString(sps, Base64.NO_WRAP))
+                    append(";sprop-pps=")
+                    append(Base64.encodeToString(pps, Base64.NO_WRAP))
+                    append(";")
+                }
+
+                // Profile/level/tier (Main profile, Level 5.1, Main tier)
+                append(" profile-id=1")
+                append(";level-id=153")  // Level 5.1
+                append(";tier-flag=0")   // Main tier
+            }
+            appendLine(fmtp)
+
+            // Video attributes
+            appendLine("a=framerate:$frameRate")
+            appendLine("a=x-dimensions:$width,$height")
+
+            // Control URL
+            appendLine("a=control:trackID=0")
+
+            // Sendonly (we're publishing)
+            appendLine("a=sendonly")
+        }
+    }
+
+    /**
+     * Get local IP address (best effort)
+     */
+    private fun getLocalAddress(): String {
+        return try {
+            // Try to get non-loopback address
+            InetAddress.getLocalHost().hostAddress ?: "127.0.0.1"
+        } catch (e: Exception) {
+            "127.0.0.1"
+        }
+    }
+
+    /**
+     * Parse parameter sets from MediaCodec CSD-0 buffer
+     * CSD-0 contains VPS, SPS, PPS in Annex B format (start codes 0x00 0x00 0x00 0x01)
+     */
+    fun parseParameterSets(csd0: ByteArray): Triple<ByteArray?, ByteArray?, ByteArray?> {
+        var vps: ByteArray? = null
+        var sps: ByteArray? = null
+        var pps: ByteArray? = null
+
+        try {
+            val nalUnits = splitNALUnits(csd0)
+
+            for (nal in nalUnits) {
+                if (nal.isEmpty()) continue
+
+                val nalType = (nal[0].toInt() shr 1) and 0x3F
+
+                when (nalType) {
+                    32 -> vps = nal  // VPS
+                    33 -> sps = nal  // SPS
+                    34 -> pps = nal  // PPS
+                }
+            }
+        } catch (e: Exception) {
+            // Parameter sets are optional, don't crash
+        }
+
+        return Triple(vps, sps, pps)
+    }
+
+    /**
+     * Split Annex B format into individual NAL units
+     * Start codes: 0x00 0x00 0x00 0x01 or 0x00 0x00 0x01
+     */
+    private fun splitNALUnits(data: ByteArray): List<ByteArray> {
+        val nalUnits = mutableListOf<ByteArray>()
+        var start = 0
+
+        for (i in 0 until data.size - 3) {
+            // Check for 4-byte start code
+            if (data[i] == 0.toByte() && data[i + 1] == 0.toByte() &&
+                data[i + 2] == 0.toByte() && data[i + 3] == 1.toByte()
+            ) {
+                if (start > 0) {
+                    nalUnits.add(data.copyOfRange(start, i))
+                }
+                start = i + 4
+            }
+            // Check for 3-byte start code
+            else if (data[i] == 0.toByte() && data[i + 1] == 0.toByte() &&
+                data[i + 2] == 1.toByte()
+            ) {
+                if (start > 0) {
+                    nalUnits.add(data.copyOfRange(start, i))
+                }
+                start = i + 3
+            }
+        }
+
+        // Add last NAL unit
+        if (start < data.size) {
+            nalUnits.add(data.copyOfRange(start, data.size))
+        }
+
+        return nalUnits
+    }
+}

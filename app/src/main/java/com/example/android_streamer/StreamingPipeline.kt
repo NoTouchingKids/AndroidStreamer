@@ -9,7 +9,11 @@ import androidx.annotation.RequiresApi
 import com.example.android_streamer.camera.Camera2Controller
 import com.example.android_streamer.encoder.HEVCEncoder
 import com.example.android_streamer.network.RTPPacketizer
+import com.example.android_streamer.network.RTCPSender
+import com.example.android_streamer.network.RTSPClient
+import com.example.android_streamer.network.SDPGenerator
 import com.example.android_streamer.network.UDPSender
+import kotlinx.coroutines.*
 import java.nio.ByteBuffer
 
 /**
@@ -17,7 +21,12 @@ import java.nio.ByteBuffer
  * - Camera2 (1080p@60fps or 4K@60fps)
  * - MediaCodec HEVC encoder (hardware-accelerated, zero-copy)
  * - RTP packetizer (RFC 7798)
- * - UDP sender (DatagramChannel with direct buffers)
+ * - UDP sender (DatagramChannel with direct buffers, lock-free SPSC queue)
+ *
+ * RTSP Support (optional):
+ * - RTSP control channel (async TCP) - ANNOUNCE, SETUP, RECORD
+ * - RTCP Sender Reports (async UDP) - statistics feedback
+ * - RTP data path remains unchanged (lock-free, low-latency)
  *
  * Optimized for Android 12+ with aggressive performance tuning.
  */
@@ -26,11 +35,16 @@ class StreamingPipeline(
     private val context: Context,
     private val config: StreamingConfig
 ) {
-    // Components
+    // Data plane (fast path - unchanged)
     private var camera: Camera2Controller? = null
     private var encoder: HEVCEncoder? = null
     private var packetizer: RTPPacketizer? = null
     private var sender: UDPSender? = null
+
+    // Control plane (async)
+    private var rtspClient: RTSPClient? = null
+    private var rtcpSender: RTCPSender? = null
+    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     // State
     private var isRunning = false
@@ -40,29 +54,73 @@ class StreamingPipeline(
      *
      * @param previewSurface Optional surface for camera preview
      */
-    fun start(previewSurface: Surface? = null) {
+    suspend fun start(previewSurface: Surface? = null) {
         if (isRunning) {
             Log.w(TAG, "Pipeline already running")
             return
         }
 
         try {
-            Log.i(TAG, "Starting streaming pipeline: ${config.resolution}@${config.frameRate}fps -> ${config.remoteHost}:${config.remotePort}")
+            val mode = if (config.useRtsp) "RTSP" else "Pure RTP/UDP"
+            Log.i(TAG, "Starting streaming pipeline ($mode): ${config.resolution}@${config.frameRate}fps -> ${config.remoteHost}:${config.remotePort}")
 
             // 1. Check hardware capabilities
             if (!HEVCEncoder.isHardwareHEVCAvailable()) {
                 throw IllegalStateException("Hardware HEVC encoder not available on this device")
             }
 
-            // 2. Create UDP sender
-            sender = UDPSender(config.remoteHost, config.remotePort).apply {
-                start()
+            // 2. RTSP handshake (async control plane) - if enabled
+            if (config.useRtsp) {
+                Log.i(TAG, "Performing RTSP handshake...")
+
+                val (width, height) = config.resolution.getDimensions()
+                val sdp = SDPGenerator.generateH265SDP(
+                    clientAddress = config.remoteHost,
+                    rtpPort = config.rtpPort,
+                    width = width,
+                    height = height,
+                    frameRate = config.frameRate
+                )
+
+                rtspClient = RTSPClient(
+                    host = config.remoteHost,
+                    port = config.rtspPort,
+                    path = config.rtspPath,
+                    rtpPort = config.rtpPort,
+                    rtcpPort = config.rtcpPort
+                )
+
+                val connected = rtspClient!!.connect(sdp)
+                if (!connected) {
+                    throw IllegalStateException("RTSP handshake failed - check MediaMTX is running")
+                }
+
+                // Start RTSP keep-alive
+                rtspClient!!.startKeepAlive()
+
+                Log.i(TAG, "RTSP session established")
             }
 
             // 3. Create RTP packetizer
             packetizer = RTPPacketizer()
 
-            // 4. Create encoder with callback
+            // 4. Create UDP sender (RTP data plane - unchanged)
+            sender = UDPSender(config.remoteHost, config.rtpPort).apply {
+                start()
+            }
+
+            // 5. Create RTCP sender (async control plane) - if RTSP enabled
+            if (config.useRtsp) {
+                rtcpSender = RTCPSender(
+                    remoteHost = config.remoteHost,
+                    remotePort = config.rtcpPort,
+                    ssrc = packetizer!!.ssrc.toLong()
+                ).apply {
+                    start()
+                }
+            }
+
+            // 6. Create encoder with callback
             encoder = when (config.resolution) {
                 Resolution.HD_1080P -> HEVCEncoder.createFor1080p60 { buffer, info ->
                     handleEncodedData(buffer, info)
@@ -72,10 +130,10 @@ class StreamingPipeline(
                 }
             }
 
-            // 5. Start encoder and get input surface
+            // 7. Start encoder and get input surface
             val encoderSurface = encoder!!.start()
 
-            // 6. Create and start camera
+            // 8. Create and start camera
             camera = Camera2Controller(context).apply {
                 val (width, height) = config.resolution.getDimensions()
                 try {
@@ -120,10 +178,16 @@ class StreamingPipeline(
 
         Log.i(TAG, "Stopping streaming pipeline...")
 
-        // Stop in reverse order
+        // Stop data plane (in reverse order)
         camera?.stopCamera()
         encoder?.stop()
         sender?.stop()
+
+        // Stop control plane (async)
+        scope.launch {
+            rtspClient?.teardown()
+        }
+        rtcpSender?.stop()
 
         // Print statistics
         printStatistics()
@@ -133,6 +197,8 @@ class StreamingPipeline(
         encoder = null
         packetizer = null
         sender = null
+        rtspClient = null
+        rtcpSender = null
 
         isRunning = false
         Log.i(TAG, "Streaming pipeline stopped")
@@ -154,7 +220,7 @@ class StreamingPipeline(
 
     /**
      * Handle encoded data from MediaCodec.
-     * Called on encoder callback thread.
+     * Called on encoder callback thread (RTP data plane - unchanged).
      */
     private fun handleEncodedData(buffer: ByteBuffer, info: MediaCodec.BufferInfo) {
         val pkt = packetizer ?: return
@@ -163,11 +229,19 @@ class StreamingPipeline(
         try {
             // Packetize H.265 NAL units into RTP packets
             pkt.packetize(buffer, info) { rtpPacket ->
-                // Send RTP packet over UDP
+                // Send RTP packet over UDP (lock-free SPSC queue)
                 val packetCopy = rtpPacket.duplicate() // Duplicate for async send
                 if (!snd.sendPacket(packetCopy)) {
                     Log.w(TAG, "Failed to send RTP packet (queue full)")
                 }
+            }
+
+            // Update RTCP statistics (async control plane)
+            rtcpSender?.let { rtcp ->
+                val stats = snd.getStats()
+                rtcp.packetCount = stats.packetsSent
+                rtcp.byteCount = stats.bytesSent
+                rtcp.lastRtpTimestamp = pkt.getStats().currentTimestamp
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error processing encoded data", e)
@@ -226,7 +300,14 @@ class StreamingPipeline(
         val resolution: Resolution,
         val frameRate: Int = 60,
         val remoteHost: String,
-        val remotePort: Int
+        val remotePort: Int,  // For backward compatibility (RTP port if pure RTP, or RTSP port if RTSP)
+
+        // RTSP configuration (optional)
+        val useRtsp: Boolean = false,
+        val rtspPort: Int = 8554,        // MediaMTX RTSP port
+        val rtspPath: String = "android", // Stream path (rtsp://host:8554/android)
+        val rtpPort: Int = 5004,          // RTP data port (client port)
+        val rtcpPort: Int = 5005          // RTCP control port (client port)
     )
 
     /**

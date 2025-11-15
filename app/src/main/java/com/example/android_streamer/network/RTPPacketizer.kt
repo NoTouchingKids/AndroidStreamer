@@ -25,7 +25,7 @@ import java.nio.ByteBuffer
  * - Proper RTP sequencing and timestamping
  */
 class RTPPacketizer(
-    private val ssrc: Int = (0..Int.MAX_VALUE).random(), // Synchronization source identifier
+    val ssrc: Int = DEFAULT_SSRC, // Synchronization source identifier (exposed for RTCP)
     private val payloadType: Int = 96 // Dynamic payload type for H.265
 ) {
     // RTP state (mutable - not thread-safe)
@@ -308,5 +308,6 @@ class RTPPacketizer(
 
     companion object {
         private const val TAG = "RTPPacketizer"
+        val DEFAULT_SSRC = (0..Int.MAX_VALUE).random()
     }
 }

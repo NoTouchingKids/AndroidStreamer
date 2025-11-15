@@ -54,11 +54,32 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:hint="Remote Port (e.g., 5004)"
+            android:hint="Remote Port (e.g., 5004 for RTP, 8554 for RTSP)"
             android:text="5004"
             android:textColor="#FFFFFF"
             android:textColorHint="#888888"
             android:inputType="number" />
+
+        <CheckBox
+            android:id="@+id/cbUseRtsp"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Use RTSP (instead of pure RTP/UDP)"
+            android:textColor="#FFFFFF"
+            android:checked="false" />
+
+        <EditText
+            android:id="@+id/etRtspPath"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:hint="RTSP Path (e.g., android)"
+            android:text="android"
+            android:textColor="#FFFFFF"
+            android:textColorHint="#888888"
+            android:inputType="text"
+            android:visibility="gone" />
 
         <Button
             android:id="@+id/btnStartStop"
