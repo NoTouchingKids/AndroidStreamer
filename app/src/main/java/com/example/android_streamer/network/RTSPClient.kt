@@ -93,11 +93,11 @@ class RTSPClient(
      */
     private suspend fun announce(sdp: String): Boolean = withContext(Dispatchers.IO) {
         val request = buildString {
-            appendLine("ANNOUNCE rtsp://$host:$port/$path RTSP/1.0")
-            appendLine("CSeq: ${cseq.getAndIncrement()}")
-            appendLine("Content-Type: application/sdp")
-            appendLine("Content-Length: ${sdp.toByteArray(Charsets.UTF_8).size}")
-            appendLine()
+            append("ANNOUNCE rtsp://$host:$port/$path RTSP/1.0\r\n")
+            append("CSeq: ${cseq.getAndIncrement()}\r\n")
+            append("Content-Type: application/sdp\r\n")
+            append("Content-Length: ${sdp.toByteArray(Charsets.UTF_8).size}\r\n")
+            append("\r\n")
             append(sdp)
         }
 
@@ -117,10 +117,10 @@ class RTSPClient(
      */
     private suspend fun setup(): Boolean = withContext(Dispatchers.IO) {
         val request = buildString {
-            appendLine("SETUP rtsp://$host:$port/$path/trackID=0 RTSP/1.0")
-            appendLine("CSeq: ${cseq.getAndIncrement()}")
-            appendLine("Transport: RTP/AVP;unicast;client_port=$rtpPort-$rtcpPort")
-            appendLine()
+            append("SETUP rtsp://$host:$port/$path/trackID=0 RTSP/1.0\r\n")
+            append("CSeq: ${cseq.getAndIncrement()}\r\n")
+            append("Transport: RTP/AVP;unicast;client_port=$rtpPort-$rtcpPort\r\n")
+            append("\r\n")
         }
 
         Log.d(TAG, "Sending SETUP:\n$request")
@@ -151,11 +151,11 @@ class RTSPClient(
      */
     private suspend fun record(): Boolean = withContext(Dispatchers.IO) {
         val request = buildString {
-            appendLine("RECORD rtsp://$host:$port/$path RTSP/1.0")
-            appendLine("CSeq: ${cseq.getAndIncrement()}")
-            appendLine("Session: $sessionId")
-            appendLine("Range: npt=0.000-")
-            appendLine()
+            append("RECORD rtsp://$host:$port/$path RTSP/1.0\r\n")
+            append("CSeq: ${cseq.getAndIncrement()}\r\n")
+            append("Session: $sessionId\r\n")
+            append("Range: npt=0.000-\r\n")
+            append("\r\n")
         }
 
         Log.d(TAG, "Sending RECORD:\n$request")
@@ -176,10 +176,10 @@ class RTSPClient(
 
         try {
             val request = buildString {
-                appendLine("OPTIONS rtsp://$host:$port/$path RTSP/1.0")
-                appendLine("CSeq: ${cseq.getAndIncrement()}")
-                appendLine("Session: $sessionId")
-                appendLine()
+                append("OPTIONS rtsp://$host:$port/$path RTSP/1.0\r\n")
+                append("CSeq: ${cseq.getAndIncrement()}\r\n")
+                append("Session: $sessionId\r\n")
+                append("\r\n")
             }
 
             writer?.print(request)
@@ -201,10 +201,10 @@ class RTSPClient(
 
         try {
             val request = buildString {
-                appendLine("TEARDOWN rtsp://$host:$port/$path RTSP/1.0")
-                appendLine("CSeq: ${cseq.getAndIncrement()}")
-                appendLine("Session: $sessionId")
-                appendLine()
+                append("TEARDOWN rtsp://$host:$port/$path RTSP/1.0\r\n")
+                append("CSeq: ${cseq.getAndIncrement()}\r\n")
+                append("Session: $sessionId\r\n")
+                append("\r\n")
             }
 
             Log.d(TAG, "Sending TEARDOWN")

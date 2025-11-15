@@ -38,21 +38,21 @@ object SDPGenerator {
 
         return buildString {
             // Session description
-            appendLine("v=0")
-            appendLine("o=- $sessionId $sessionVersion IN IP4 $clientAddress")
-            appendLine("s=Android H.265 Stream")
-            appendLine("c=IN IP4 $clientAddress")
-            appendLine("t=0 0")
-            appendLine("a=tool:AndroidStreamer")
-            appendLine("a=type:broadcast")
-            appendLine("a=control:*")
+            append("v=0\r\n")
+            append("o=- $sessionId $sessionVersion IN IP4 $clientAddress\r\n")
+            append("s=Android H.265 Stream\r\n")
+            append("c=IN IP4 $clientAddress\r\n")
+            append("t=0 0\r\n")
+            append("a=tool:AndroidStreamer\r\n")
+            append("a=type:broadcast\r\n")
+            append("a=control:*\r\n")
 
             // Media description
-            appendLine("m=video $rtpPort RTP/AVP $payloadType")
-            appendLine("b=AS:4000")  // 4 Mbps bandwidth
+            append("m=video $rtpPort RTP/AVP $payloadType\r\n")
+            append("b=AS:4000\r\n")  // 4 Mbps bandwidth
 
             // RTP map for H.265
-            appendLine("a=rtpmap:$payloadType H265/90000")
+            append("a=rtpmap:$payloadType H265/90000\r\n")
 
             // Format parameters
             val fmtp = buildString {
@@ -74,17 +74,18 @@ object SDPGenerator {
                 append(";level-id=153")  // Level 5.1
                 append(";tier-flag=0")   // Main tier
             }
-            appendLine(fmtp)
+            append(fmtp)
+            append("\r\n")
 
             // Video attributes
-            appendLine("a=framerate:$frameRate")
-            appendLine("a=x-dimensions:$width,$height")
+            append("a=framerate:$frameRate\r\n")
+            append("a=x-dimensions:$width,$height\r\n")
 
             // Control URL
-            appendLine("a=control:trackID=0")
+            append("a=control:trackID=0\r\n")
 
             // Sendonly (we're publishing)
-            appendLine("a=sendonly")
+            append("a=sendonly\r\n")
         }
     }
 
