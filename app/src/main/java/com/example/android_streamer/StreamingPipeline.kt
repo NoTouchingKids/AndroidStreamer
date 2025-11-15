@@ -51,7 +51,7 @@ class StreamingPipeline(
 
             // 1. Check hardware capabilities
             if (!HEVCEncoder.isHardwareHEVCAvailable()) {
-                throw IllegalStateException("Hardware HEVC encoder not available")
+                throw IllegalStateException("Hardware HEVC encoder not available on this device")
             }
 
             // 2. Create UDP sender
@@ -78,13 +78,26 @@ class StreamingPipeline(
             // 6. Create and start camera
             camera = Camera2Controller(context).apply {
                 val (width, height) = config.resolution.getDimensions()
-                startCamera(
-                    targetSurface = encoderSurface,
-                    previewSurface = previewSurface,
-                    width = width,
-                    height = height,
-                    fps = config.frameRate
-                )
+                try {
+                    startCamera(
+                        targetSurface = encoderSurface,
+                        previewSurface = previewSurface,
+                        width = width,
+                        height = height,
+                        fps = config.frameRate
+                    )
+                } catch (e: IllegalStateException) {
+                    // Provide helpful error message
+                    val suggestion = if (config.resolution == Resolution.UHD_4K) {
+                        "Try 1080p instead of 4K, or reduce frame rate"
+                    } else {
+                        "Try reducing frame rate to 30fps"
+                    }
+                    throw IllegalStateException(
+                        "Camera doesn't support ${width}x${height}@${config.frameRate}fps. $suggestion",
+                        e
+                    )
+                }
             }
 
             isRunning = true

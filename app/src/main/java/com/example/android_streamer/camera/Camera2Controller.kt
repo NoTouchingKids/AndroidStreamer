@@ -120,9 +120,12 @@ class Camera2Controller(private val context: Context) {
 
     /**
      * Find camera that supports the target resolution and frame rate.
+     * Falls back gracefully if exact FPS is not supported.
      */
     private fun findSuitableCamera(width: Int, height: Int, fps: Int): String? {
         val manager = cameraManager ?: return null
+
+        var fallbackCamera: String? = null
 
         for (id in manager.cameraIdList) {
             val chars = manager.getCameraCharacteristics(id)
@@ -139,18 +142,44 @@ class Camera2Controller(private val context: Context) {
                     size.width == width && size.height == height
                 } ?: false
 
-                // Check fps support
-                val supportsFps = fpsRanges?.any { range ->
+                if (!supportsResolution) {
+                    Log.d(TAG, "Camera $id: Resolution ${width}x${height} not supported")
+                    continue
+                }
+
+                // Log available FPS ranges for debugging
+                fpsRanges?.forEach { range ->
+                    Log.d(TAG, "Camera $id: Available FPS range ${range.lower}-${range.upper}")
+                }
+
+                // Try exact FPS match first
+                val exactFpsMatch = fpsRanges?.any { range ->
                     range.lower == fps && range.upper == fps
                 } ?: false
 
-                if (supportsResolution && supportsFps) {
-                    Log.d(TAG, "Found suitable camera: $id")
+                if (exactFpsMatch) {
+                    Log.i(TAG, "Found camera with exact ${fps}fps: $id")
                     return id
+                }
+
+                // Try FPS range that includes target FPS
+                val fpsInRange = fpsRanges?.any { range ->
+                    range.lower <= fps && range.upper >= fps
+                } ?: false
+
+                if (fpsInRange && fallbackCamera == null) {
+                    Log.i(TAG, "Found camera with FPS range including ${fps}fps: $id")
+                    fallbackCamera = id
                 }
             }
         }
 
+        if (fallbackCamera != null) {
+            Log.w(TAG, "Using fallback camera (FPS may vary): $fallbackCamera")
+            return fallbackCamera
+        }
+
+        Log.e(TAG, "No camera found supporting ${width}x${height}@${fps}fps")
         return null
     }
 
