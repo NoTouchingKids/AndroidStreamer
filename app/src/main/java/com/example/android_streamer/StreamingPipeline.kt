@@ -69,19 +69,55 @@ class StreamingPipeline(
                 throw IllegalStateException("Hardware HEVC encoder not available on this device")
             }
 
-            // 2. RTSP handshake (async control plane) - if enabled
+            // 2. Create RTP packetizer (needed for SSRC)
+            packetizer = RTPPacketizer()
+
+            // 3. Create encoder with format callback for VPS/SPS/PPS
+            val csd0Deferred = CompletableDeferred<ByteArray?>()
+            encoder = when (config.resolution) {
+                Resolution.HD_1080P -> HEVCEncoder.createFor1080p60(
+                    onEncodedData = { buffer, info -> handleEncodedData(buffer, info) },
+                    onFormatChanged = { csd0 -> csd0Deferred.complete(csd0) }
+                )
+                Resolution.UHD_4K -> HEVCEncoder.createFor4K60(
+                    onEncodedData = { buffer, info -> handleEncodedData(buffer, info) },
+                    onFormatChanged = { csd0 -> csd0Deferred.complete(csd0) }
+                )
+            }
+
+            // 4. Start encoder and get input surface
+            val encoderSurface = encoder!!.start()
+
+            // 5. Wait for encoder format (contains VPS/SPS/PPS) - with timeout
+            Log.i(TAG, "Waiting for encoder format...")
+            val csd0 = withTimeoutOrNull(5000) { csd0Deferred.await() }
+
+            // 6. RTSP handshake (async control plane) - if enabled
             if (config.useRtsp) {
                 Log.i(TAG, "Performing RTSP handshake...")
 
                 val (width, height) = config.resolution.getDimensions()
                 val rtspUrl = "rtsp://${config.remoteHost}:${config.rtspPort}/${config.rtspPath}"
+
+                // Parse VPS/SPS/PPS from CSD-0 if available
+                val (vps, sps, pps) = if (csd0 != null) {
+                    Log.i(TAG, "Parsing VPS/SPS/PPS from CSD-0 (${csd0.size} bytes)")
+                    SDPGenerator.parseParameterSets(csd0)
+                } else {
+                    Log.w(TAG, "No CSD-0 data available, SDP will not include parameter sets")
+                    Triple(null, null, null)
+                }
+
                 val sdp = SDPGenerator.generateH265SDP(
                     clientAddress = config.remoteHost,
                     rtpPort = config.rtpPort,
                     width = width,
                     height = height,
                     frameRate = config.frameRate,
-                    rtspUrl = rtspUrl
+                    rtspUrl = rtspUrl,
+                    vps = vps,
+                    sps = sps,
+                    pps = pps
                 )
 
                 rtspClient = RTSPClient(
@@ -103,15 +139,12 @@ class StreamingPipeline(
                 Log.i(TAG, "RTSP session established")
             }
 
-            // 3. Create RTP packetizer
-            packetizer = RTPPacketizer()
-
-            // 4. Create UDP sender (RTP data plane - unchanged)
+            // 7. Create UDP sender (RTP data plane - unchanged)
             sender = UDPSender(config.remoteHost, config.rtpPort).apply {
                 start()
             }
 
-            // 5. Create RTCP sender (async control plane) - if RTSP enabled
+            // 8. Create RTCP sender (async control plane) - if RTSP enabled
             if (config.useRtsp) {
                 rtcpSender = RTCPSender(
                     remoteHost = config.remoteHost,
@@ -122,20 +155,7 @@ class StreamingPipeline(
                 }
             }
 
-            // 6. Create encoder with callback
-            encoder = when (config.resolution) {
-                Resolution.HD_1080P -> HEVCEncoder.createFor1080p60 { buffer, info ->
-                    handleEncodedData(buffer, info)
-                }
-                Resolution.UHD_4K -> HEVCEncoder.createFor4K60 { buffer, info ->
-                    handleEncodedData(buffer, info)
-                }
-            }
-
-            // 7. Start encoder and get input surface
-            val encoderSurface = encoder!!.start()
-
-            // 8. Create and start camera
+            // 9. Create and start camera
             camera = Camera2Controller(context).apply {
                 val (width, height) = config.resolution.getDimensions()
                 try {

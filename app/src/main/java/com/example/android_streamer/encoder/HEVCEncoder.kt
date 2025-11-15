@@ -21,7 +21,8 @@ class HEVCEncoder(
     private val height: Int,
     private val frameRate: Int,
     private val bitrate: Int,
-    private val onEncodedData: (ByteBuffer, MediaCodec.BufferInfo) -> Unit
+    private val onEncodedData: (ByteBuffer, MediaCodec.BufferInfo) -> Unit,
+    private val onFormatChanged: ((ByteArray?) -> Unit)? = null  // Callback for CSD-0 (VPS/SPS/PPS)
 ) {
     private var encoder: MediaCodec? = null
     private var inputSurface: Surface? = null
@@ -193,6 +194,19 @@ class HEVCEncoder(
 
         override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
             Log.i(TAG, "Output format changed: $format")
+
+            // Extract CSD-0 buffer (contains VPS/SPS/PPS for H.265)
+            val csd0 = format.getByteBuffer("csd-0")
+            if (csd0 != null) {
+                val csd0Array = ByteArray(csd0.remaining())
+                csd0.get(csd0Array)
+                csd0.rewind()
+                Log.d(TAG, "CSD-0 extracted: ${csd0Array.size} bytes")
+                onFormatChanged?.invoke(csd0Array)
+            } else {
+                Log.w(TAG, "CSD-0 not found in output format")
+                onFormatChanged?.invoke(null)
+            }
         }
     }
 
@@ -202,26 +216,34 @@ class HEVCEncoder(
         /**
          * Create encoder for 1080p@60fps with recommended bitrate.
          */
-        fun createFor1080p60(onEncodedData: (ByteBuffer, MediaCodec.BufferInfo) -> Unit): HEVCEncoder {
+        fun createFor1080p60(
+            onEncodedData: (ByteBuffer, MediaCodec.BufferInfo) -> Unit,
+            onFormatChanged: ((ByteArray?) -> Unit)? = null
+        ): HEVCEncoder {
             return HEVCEncoder(
                 width = 1920,
                 height = 1080,
                 frameRate = 60,
                 bitrate = 10_000_000, // 10 Mbps for 1080p60
-                onEncodedData = onEncodedData
+                onEncodedData = onEncodedData,
+                onFormatChanged = onFormatChanged
             )
         }
 
         /**
          * Create encoder for 4K@60fps with recommended bitrate.
          */
-        fun createFor4K60(onEncodedData: (ByteBuffer, MediaCodec.BufferInfo) -> Unit): HEVCEncoder {
+        fun createFor4K60(
+            onEncodedData: (ByteBuffer, MediaCodec.BufferInfo) -> Unit,
+            onFormatChanged: ((ByteArray?) -> Unit)? = null
+        ): HEVCEncoder {
             return HEVCEncoder(
                 width = 3840,
                 height = 2160,
                 frameRate = 60,
                 bitrate = 40_000_000, // 40 Mbps for 4K60
-                onEncodedData = onEncodedData
+                onEncodedData = onEncodedData,
+                onFormatChanged = onFormatChanged
             )
         }
 
