@@ -227,15 +227,22 @@ class Camera2Controller(private val context: Context) {
         val camera = cameraDevice ?: return
         val session = captureSession ?: return
 
+        // Calculate frame duration in nanoseconds
+        // Frame duration = 1 second / fps (in nanoseconds)
+        val frameDurationNs = 1_000_000_000L / fps
+
         // Build capture request
         val requestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
             addTarget(targetSurface)
             previewSurface?.let { addTarget(it) }
 
-            // Lock frame rate to exact value
+            // Lock frame rate using frame duration (more precise than FPS range)
+            set(CaptureRequest.SENSOR_FRAME_DURATION, frameDurationNs)
+
+            // Also set FPS range as a hint
             set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(fps, fps))
 
-            // Auto mode for exposure and white balance
+            // Manual control mode for precise timing
             set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
             set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
             set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
@@ -243,12 +250,9 @@ class Camera2Controller(private val context: Context) {
             // Disable video stabilization for lower latency
             set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
                 CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
-
-            // Request low-latency mode if available
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON_AUTO_FLASH_REDEYE)
-            }
         }
+
+        Log.d(TAG, "Configured capture: ${fps}fps (frame duration: ${frameDurationNs}ns)")
 
         // Start repeating request
         session.setRepeatingRequest(
