@@ -94,8 +94,8 @@ object SDPGenerator {
                 append("a=control:trackID=0\r\n")
             }
 
-            // Sendonly (we're publishing)
-            append("a=sendonly\r\n")
+            // Note: No direction attribute (sendonly/recvonly) for RTSP publishing
+            // MediaMTX rejects "sendonly" as it interprets it as a back channel
         }
     }
 
