@@ -31,7 +31,8 @@ object SDPGenerator {
         payloadType: Int = 96,
         vps: ByteArray? = null,
         sps: ByteArray? = null,
-        pps: ByteArray? = null
+        pps: ByteArray? = null,
+        rtspUrl: String? = null  // Optional RTSP URL for absolute control URLs
     ): String {
         val sessionId = System.currentTimeMillis()
         val sessionVersion = sessionId
@@ -45,7 +46,13 @@ object SDPGenerator {
             append("t=0 0\r\n")
             append("a=tool:AndroidStreamer\r\n")
             append("a=type:broadcast\r\n")
-            append("a=control:*\r\n")
+
+            // Control URL - absolute if rtspUrl provided, otherwise relative
+            if (rtspUrl != null) {
+                append("a=control:$rtspUrl\r\n")
+            } else {
+                append("a=control:*\r\n")
+            }
 
             // Media description
             append("m=video $rtpPort RTP/AVP $payloadType\r\n")
@@ -81,8 +88,12 @@ object SDPGenerator {
             append("a=framerate:$frameRate\r\n")
             append("a=x-dimensions:$width,$height\r\n")
 
-            // Control URL
-            append("a=control:trackID=0\r\n")
+            // Track control URL - absolute if rtspUrl provided, otherwise relative
+            if (rtspUrl != null) {
+                append("a=control:$rtspUrl/trackID=0\r\n")
+            } else {
+                append("a=control:trackID=0\r\n")
+            }
 
             // Sendonly (we're publishing)
             append("a=sendonly\r\n")

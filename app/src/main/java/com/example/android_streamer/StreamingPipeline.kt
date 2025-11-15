@@ -74,12 +74,14 @@ class StreamingPipeline(
                 Log.i(TAG, "Performing RTSP handshake...")
 
                 val (width, height) = config.resolution.getDimensions()
+                val rtspUrl = "rtsp://${config.remoteHost}:${config.rtspPort}/${config.rtspPath}"
                 val sdp = SDPGenerator.generateH265SDP(
                     clientAddress = config.remoteHost,
                     rtpPort = config.rtpPort,
                     width = width,
                     height = height,
-                    frameRate = config.frameRate
+                    frameRate = config.frameRate,
+                    rtspUrl = rtspUrl
                 )
 
                 rtspClient = RTSPClient(
