@@ -227,32 +227,30 @@ class Camera2Controller(private val context: Context) {
         val camera = cameraDevice ?: return
         val session = captureSession ?: return
 
-        // Calculate frame duration in nanoseconds
-        // Frame duration = 1 second / fps (in nanoseconds)
-        val frameDurationNs = 1_000_000_000L / fps
-
         // Build capture request
         val requestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply {
             addTarget(targetSurface)
             previewSurface?.let { addTarget(it) }
 
-            // Lock frame rate using frame duration (more precise than FPS range)
-            set(CaptureRequest.SENSOR_FRAME_DURATION, frameDurationNs)
-
-            // Also set FPS range as a hint
-            set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(fps, fps))
-
-            // Manual control mode for precise timing
             set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
             set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-            set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
+            set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(fps, fps))
 
-            // Disable video stabilization for lower latency
+            // Samsung 60fps fix: Use SENSOR_FRAME_DURATION to bypass FPS restrictions
+            if (fps >= 60) {
+                set(CaptureRequest.SENSOR_FRAME_DURATION, 1_000_000_000L / fps)
+            }
+
+            set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+            set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
             set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
                 CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
+            set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_OFF)
+            set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_OFF)
         }
 
-        Log.d(TAG, "Configured capture: ${fps}fps (frame duration: ${frameDurationNs}ns)")
+        Log.d(TAG, "Configured capture: ${fps}fps" +
+            if (fps >= 60) " (frame duration: ${1_000_000_000L / fps}ns)" else "")
 
         // Start repeating request
         session.setRepeatingRequest(
