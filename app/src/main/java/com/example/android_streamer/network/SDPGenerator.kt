@@ -82,6 +82,8 @@ object SDPGenerator {
                 // Profile/level/tier (Main profile, Level 5.1, Main tier)
                 if (vps != null && sps != null && pps != null) {
                     append(";")
+                } else {
+                    append(" ")
                 }
                 append("profile-id=1")
                 append(";level-id=153")  // Level 5.1
