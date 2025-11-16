@@ -1,6 +1,7 @@
 package com.example.android_streamer.network
 
 import android.util.Base64
+import android.util.Log
 import java.net.InetAddress
 
 /**
@@ -8,6 +9,7 @@ import java.net.InetAddress
  * Describes H.265/HEVC video stream parameters
  */
 object SDPGenerator {
+    private const val TAG = "SDPGenerator"
 
     /**
      * Generate SDP for H.265 stream
@@ -37,7 +39,9 @@ object SDPGenerator {
         val sessionId = System.currentTimeMillis()
         val sessionVersion = sessionId
 
-        return buildString {
+        Log.d(TAG, "Generating SDP with client address: $clientAddress")
+
+        val sdp = buildString {
             // Session description
             append("v=0\r\n")
             append("o=- $sessionId $sessionVersion IN IP4 $clientAddress\r\n")
@@ -73,11 +77,13 @@ object SDPGenerator {
                     append(Base64.encodeToString(sps, Base64.NO_WRAP))
                     append(";sprop-pps=")
                     append(Base64.encodeToString(pps, Base64.NO_WRAP))
-                    append(";")
                 }
 
                 // Profile/level/tier (Main profile, Level 5.1, Main tier)
-                append(" profile-id=1")
+                if (vps != null && sps != null && pps != null) {
+                    append(";")
+                }
+                append("profile-id=1")
                 append(";level-id=153")  // Level 5.1
                 append(";tier-flag=0")   // Main tier
             }
@@ -94,15 +100,27 @@ object SDPGenerator {
             // Note: No direction attribute (sendonly/recvonly) for RTSP publishing
             // MediaMTX rejects "sendonly" as it interprets it as a back channel
         }
+
+        Log.d(TAG, "Generated SDP:\n$sdp")
+        return sdp
     }
 
     /**
-     * Get local IP address (best effort)
+     * Get local IP address (Android-compatible)
+     * Searches network interfaces for non-loopback IPv4 address
      */
     private fun getLocalAddress(): String {
         return try {
-            // Try to get non-loopback address
-            InetAddress.getLocalHost().hostAddress ?: "127.0.0.1"
+            val interfaces = java.util.Collections.list(java.net.NetworkInterface.getNetworkInterfaces())
+            for (intf in interfaces) {
+                val addrs = java.util.Collections.list(intf.inetAddresses)
+                for (addr in addrs) {
+                    if (!addr.isLoopbackAddress && addr is java.net.Inet4Address) {
+                        return addr.hostAddress ?: "127.0.0.1"
+                    }
+                }
+            }
+            "127.0.0.1"
         } catch (e: Exception) {
             "127.0.0.1"
         }

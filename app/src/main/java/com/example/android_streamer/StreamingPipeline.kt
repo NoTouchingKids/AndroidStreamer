@@ -109,7 +109,7 @@ class StreamingPipeline(
                 }
 
                 val sdp = SDPGenerator.generateH265SDP(
-                    clientAddress = config.remoteHost,
+                    // clientAddress will be auto-detected (local device IP)
                     rtpPort = config.rtpPort,
                     width = width,
                     height = height,
