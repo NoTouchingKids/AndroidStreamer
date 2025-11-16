@@ -142,21 +142,39 @@ object SDPGenerator {
         var pps: ByteArray? = null
 
         try {
-            val nalUnits = splitNALUnits(csd0)
+            Log.d(TAG, "Parsing CSD-0: ${csd0.size} bytes")
+            Log.d(TAG, "CSD-0 hex: ${csd0.take(20).joinToString(" ") { "%02x".format(it) }}...")
 
-            for (nal in nalUnits) {
+            val nalUnits = splitNALUnits(csd0)
+            Log.d(TAG, "Found ${nalUnits.size} NAL units")
+
+            for ((index, nal) in nalUnits.withIndex()) {
                 if (nal.isEmpty()) continue
 
                 val nalType = (nal[0].toInt() shr 1) and 0x3F
+                Log.d(TAG, "NAL unit $index: type=$nalType, size=${nal.size}")
 
                 when (nalType) {
-                    32 -> vps = nal  // VPS
-                    33 -> sps = nal  // SPS
-                    34 -> pps = nal  // PPS
+                    32 -> {
+                        vps = nal
+                        Log.i(TAG, "VPS found: ${nal.size} bytes")
+                    }
+                    33 -> {
+                        sps = nal
+                        Log.i(TAG, "SPS found: ${nal.size} bytes")
+                    }
+                    34 -> {
+                        pps = nal
+                        Log.i(TAG, "PPS found: ${nal.size} bytes")
+                    }
                 }
             }
+
+            if (vps == null || sps == null || pps == null) {
+                Log.w(TAG, "Missing parameter sets: VPS=${vps?.size}, SPS=${sps?.size}, PPS=${pps?.size}")
+            }
         } catch (e: Exception) {
-            // Parameter sets are optional, don't crash
+            Log.e(TAG, "Failed to parse parameter sets", e)
         }
 
         return Triple(vps, sps, pps)
