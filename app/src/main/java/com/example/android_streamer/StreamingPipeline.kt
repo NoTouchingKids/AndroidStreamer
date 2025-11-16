@@ -116,7 +116,16 @@ class StreamingPipeline(
 
             // 6. Wait for encoder format (contains VPS/SPS/PPS) - now that camera is feeding frames
             Log.i(TAG, "Waiting for encoder format callback (CSD-0)...")
-            val csd0 = withTimeoutOrNull(3000) { csd0Deferred.await() }
+            val csd0 = withTimeoutOrNull(5000) {
+                Log.d(TAG, "CSD-0 deferred is awaiting...")
+                csd0Deferred.await()
+            }
+
+            if (csd0 != null) {
+                Log.i(TAG, "Received CSD-0: ${csd0.size} bytes")
+            } else {
+                Log.w(TAG, "CSD-0 timeout - format callback not triggered yet")
+            }
 
             // 7. RTSP handshake (async control plane) - if enabled
             if (config.useRtsp) {
