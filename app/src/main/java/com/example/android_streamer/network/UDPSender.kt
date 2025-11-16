@@ -204,6 +204,11 @@ class UDPSender(
                     slot.buffer.rewind()
                     val bytesSentNow = channel.send(slot.buffer, remoteAddress)
 
+                    // Debug logging for first few packets
+                    if (packetsSent.get() < 5) {
+                        Log.d(TAG, "Sent packet ${packetsSent.get() + 1}: $bytesSentNow bytes to $remoteAddress")
+                    }
+
                     if (bytesSentNow > 0) {
                         packetsSent.incrementAndGet()
                         bytesSent.addAndGet(bytesSentNow.toLong())
