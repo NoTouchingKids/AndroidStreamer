@@ -203,19 +203,34 @@ class StreamingPipeline(
                 Log.i(TAG, "RTSP session established")
             }
 
-            // 8. Create UDP sender (RTP data plane - unchanged)
-            sender = UDPSender(config.remoteHost, config.rtpPort).apply {
+            // 8. Create UDP sender (RTP data plane)
+            // Use server ports from RTSP SETUP if available, otherwise use config ports
+            val rtpDestPort = if (config.useRtsp && rtspClient!!.serverRtpPort != 0) {
+                rtspClient!!.serverRtpPort
+            } else {
+                config.rtpPort
+            }
+
+            sender = UDPSender(config.remoteHost, rtpDestPort).apply {
                 start()
             }
+            Log.i(TAG, "UDP sender using destination port: $rtpDestPort")
 
             // 9. Create RTCP sender (async control plane) - if RTSP enabled
             if (config.useRtsp) {
+                val rtcpDestPort = if (rtspClient!!.serverRtcpPort != 0) {
+                    rtspClient!!.serverRtcpPort
+                } else {
+                    config.rtcpPort
+                }
+
                 rtcpSender = RTCPSender(
                     remoteHost = config.remoteHost,
-                    remotePort = config.rtcpPort,
+                    remotePort = rtcpDestPort,
                     ssrc = packetizer!!.ssrc.toLong()
                 )
                 rtcpSender!!.start()
+                Log.i(TAG, "RTCP sender using destination port: $rtcpDestPort")
             }
 
             isRunning = true

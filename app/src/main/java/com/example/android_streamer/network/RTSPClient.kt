@@ -38,6 +38,12 @@ class RTSPClient(
     private val cseq = AtomicInteger(1)
     private var sessionId: String? = null
 
+    // Server ports for RTP/RTCP (extracted from SETUP response)
+    var serverRtpPort: Int = 0
+        private set
+    var serverRtcpPort: Int = 0
+        private set
+
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     @Volatile
@@ -143,6 +149,23 @@ class RTSPClient(
             ?.firstOrNull()
 
         Log.i(TAG, "Session ID: $sessionId")
+
+        // Extract server_port from Transport header
+        // Format: Transport: RTP/AVP;unicast;client_port=5004-5005;server_port=8000-8001
+        val transportLine = response.lines()
+            .find { it.startsWith("Transport:", ignoreCase = true) }
+
+        if (transportLine != null) {
+            val serverPortMatch = Regex("server_port=(\\d+)-(\\d+)").find(transportLine)
+            if (serverPortMatch != null) {
+                serverRtpPort = serverPortMatch.groupValues[1].toInt()
+                serverRtcpPort = serverPortMatch.groupValues[2].toInt()
+                Log.i(TAG, "Server ports: RTP=$serverRtpPort, RTCP=$serverRtcpPort")
+            } else {
+                Log.w(TAG, "Could not extract server_port from Transport header")
+            }
+        }
+
         sessionId != null
     }
 
