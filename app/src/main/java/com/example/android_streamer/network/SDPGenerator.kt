@@ -193,16 +193,16 @@ object SDPGenerator {
             if (data[i] == 0.toByte() && data[i + 1] == 0.toByte() &&
                 data[i + 2] == 0.toByte() && data[i + 3] == 1.toByte()
             ) {
-                if (start > 0) {
+                if (start < i) {
                     nalUnits.add(data.copyOfRange(start, i))
                 }
                 start = i + 4
             }
-            // Check for 3-byte start code
+            // Check for 3-byte start code (only if not part of 4-byte start code)
             else if (data[i] == 0.toByte() && data[i + 1] == 0.toByte() &&
                 data[i + 2] == 1.toByte()
             ) {
-                if (start > 0) {
+                if (start < i) {
                     nalUnits.add(data.copyOfRange(start, i))
                 }
                 start = i + 3
