@@ -95,9 +95,13 @@ object SDPGenerator {
             // Video attributes
             append("a=framerate:$frameRate\r\n")
 
-            // Note: No track-level control URL for RTSP publishing
-            // For ANNOUNCE/RECORD, the session-level control URL is sufficient
-            // MediaMTX uses the session path for SETUP, not per-track URLs
+            // Track-level control URL for SETUP
+            // MediaMTX needs this to identify the media track during SETUP
+            if (rtspUrl != null) {
+                append("a=control:$rtspUrl/trackID=0\r\n")
+            } else {
+                append("a=control:trackID=0\r\n")
+            }
 
             // Note: No direction attribute (sendonly/recvonly) for RTSP publishing
             // MediaMTX rejects "sendonly" as it interprets it as a back channel

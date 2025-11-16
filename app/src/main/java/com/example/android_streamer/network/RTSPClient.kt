@@ -117,7 +117,7 @@ class RTSPClient(
      */
     private suspend fun setup(): Boolean = withContext(Dispatchers.IO) {
         val request = buildString {
-            append("SETUP rtsp://$host:$port/$path RTSP/1.0\r\n")
+            append("SETUP rtsp://$host:$port/$path/trackID=0 RTSP/1.0\r\n")
             append("CSeq: ${cseq.getAndIncrement()}\r\n")
             append("Transport: RTP/AVP;unicast;client_port=$rtpPort-$rtcpPort;mode=record\r\n")
             append("\r\n")
