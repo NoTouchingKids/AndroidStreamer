@@ -116,15 +116,44 @@ class StreamingPipeline(
 
             // 6. Wait for encoder format (contains VPS/SPS/PPS) - now that camera is feeding frames
             Log.i(TAG, "Waiting for encoder format callback (CSD-0)...")
-            val csd0 = withTimeoutOrNull(5000) {
-                Log.d(TAG, "CSD-0 deferred is awaiting...")
-                csd0Deferred.await()
+
+            // Give camera a moment to start producing frames
+            delay(100)
+
+            // Request keyframe to trigger format callback
+            encoder?.requestSyncFrame()
+
+            var csd0: ByteArray? = null
+
+            // Try multiple times with shorter timeouts
+            for (attempt in 1..3) {
+                Log.d(TAG, "CSD-0 attempt $attempt/3...")
+                csd0 = withTimeoutOrNull(2000) {
+                    csd0Deferred.await()
+                }
+
+                if (csd0 != null) {
+                    Log.i(TAG, "Received CSD-0: ${csd0.size} bytes (attempt $attempt)")
+                    break
+                } else if (attempt < 3) {
+                    Log.w(TAG, "CSD-0 not received yet, requesting keyframe and retrying...")
+                    encoder?.requestSyncFrame()
+                    delay(200)
+                }
             }
 
-            if (csd0 != null) {
-                Log.i(TAG, "Received CSD-0: ${csd0.size} bytes")
-            } else {
-                Log.w(TAG, "CSD-0 timeout - format callback not triggered yet")
+            if (csd0 == null) {
+                Log.w(TAG, "CSD-0 timeout after 3 attempts - format callback not triggered")
+                Log.w(TAG, "SDP will not include parameter sets (may affect some players)")
+
+                // Optional: Fail if parameter sets are required
+                if (config.requireParameterSets) {
+                    throw IllegalStateException(
+                        "Failed to obtain VPS/SPS/PPS from encoder. " +
+                        "This may indicate an encoder configuration issue. " +
+                        "Set requireParameterSets=false to proceed without them."
+                    )
+                }
             }
 
             // 7. RTSP handshake (async control plane) - if enabled
@@ -338,7 +367,10 @@ class StreamingPipeline(
         val rtspPort: Int = 8554,        // MediaMTX RTSP port
         val rtspPath: String = "android", // Stream path (rtsp://host:8554/android)
         val rtpPort: Int = 5004,          // RTP data port (client port)
-        val rtcpPort: Int = 5005          // RTCP control port (client port)
+        val rtcpPort: Int = 5005,         // RTCP control port (client port)
+
+        // Encoder configuration
+        val requireParameterSets: Boolean = false  // Fail if VPS/SPS/PPS not obtained
     )
 
     /**
