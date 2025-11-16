@@ -185,9 +185,8 @@ class StreamingPipeline(
                     remoteHost = config.remoteHost,
                     remotePort = config.rtcpPort,
                     ssrc = packetizer!!.ssrc.toLong()
-                ).apply {
-                    start()
-                }
+                )
+                rtcpSender!!.start()
             }
 
             isRunning = true

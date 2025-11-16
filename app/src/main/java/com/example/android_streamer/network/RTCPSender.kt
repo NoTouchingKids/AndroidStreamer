@@ -46,8 +46,8 @@ class RTCPSender(
     /**
      * Start RTCP sender (opens UDP channel and starts SR loop)
      */
-    fun start() {
-        if (isRunning) return
+    suspend fun start() = withContext(Dispatchers.IO) {
+        if (isRunning) return@withContext
 
         try {
             // Open UDP channel for RTCP
