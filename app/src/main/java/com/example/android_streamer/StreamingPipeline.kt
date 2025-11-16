@@ -88,11 +88,37 @@ class StreamingPipeline(
             // 4. Start encoder and get input surface
             val encoderSurface = encoder!!.start()
 
-            // 5. Wait for encoder format (contains VPS/SPS/PPS) - with timeout
-            Log.i(TAG, "Waiting for encoder format...")
-            val csd0 = withTimeoutOrNull(5000) { csd0Deferred.await() }
+            // 5. Start camera FIRST so encoder gets frames and triggers format callback
+            camera = Camera2Controller(context).apply {
+                val (width, height) = config.resolution.getDimensions()
+                try {
+                    Log.i(TAG, "Starting camera ${width}x${height}@${config.frameRate}fps")
+                    startCamera(
+                        targetSurface = encoderSurface,
+                        previewSurface = previewSurface,
+                        width = width,
+                        height = height,
+                        fps = config.frameRate
+                    )
+                } catch (e: IllegalStateException) {
+                    // Provide helpful error message
+                    val suggestion = if (config.resolution == Resolution.UHD_4K) {
+                        "Try 1080p instead of 4K, or reduce frame rate"
+                    } else {
+                        "Try reducing frame rate to 30fps"
+                    }
+                    throw IllegalStateException(
+                        "Camera doesn't support ${width}x${height}@${config.frameRate}fps. $suggestion",
+                        e
+                    )
+                }
+            }
 
-            // 6. RTSP handshake (async control plane) - if enabled
+            // 6. Wait for encoder format (contains VPS/SPS/PPS) - now that camera is feeding frames
+            Log.i(TAG, "Waiting for encoder format callback (CSD-0)...")
+            val csd0 = withTimeoutOrNull(3000) { csd0Deferred.await() }
+
+            // 7. RTSP handshake (async control plane) - if enabled
             if (config.useRtsp) {
                 Log.i(TAG, "Performing RTSP handshake...")
 
@@ -139,12 +165,12 @@ class StreamingPipeline(
                 Log.i(TAG, "RTSP session established")
             }
 
-            // 7. Create UDP sender (RTP data plane - unchanged)
+            // 8. Create UDP sender (RTP data plane - unchanged)
             sender = UDPSender(config.remoteHost, config.rtpPort).apply {
                 start()
             }
 
-            // 8. Create RTCP sender (async control plane) - if RTSP enabled
+            // 9. Create RTCP sender (async control plane) - if RTSP enabled
             if (config.useRtsp) {
                 rtcpSender = RTCPSender(
                     remoteHost = config.remoteHost,
@@ -152,31 +178,6 @@ class StreamingPipeline(
                     ssrc = packetizer!!.ssrc.toLong()
                 ).apply {
                     start()
-                }
-            }
-
-            // 9. Create and start camera
-            camera = Camera2Controller(context).apply {
-                val (width, height) = config.resolution.getDimensions()
-                try {
-                    startCamera(
-                        targetSurface = encoderSurface,
-                        previewSurface = previewSurface,
-                        width = width,
-                        height = height,
-                        fps = config.frameRate
-                    )
-                } catch (e: IllegalStateException) {
-                    // Provide helpful error message
-                    val suggestion = if (config.resolution == Resolution.UHD_4K) {
-                        "Try 1080p instead of 4K, or reduce frame rate"
-                    } else {
-                        "Try reducing frame rate to 30fps"
-                    }
-                    throw IllegalStateException(
-                        "Camera doesn't support ${width}x${height}@${config.frameRate}fps. $suggestion",
-                        e
-                    )
                 }
             }
 
