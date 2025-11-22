@@ -61,13 +61,14 @@ class UDPSender(
         }
 
         try {
-            // Create blocking DatagramChannel for reliable packet delivery
+            // Create non-blocking DatagramChannel for high-performance streaming
             channel = DatagramChannel.open().apply {
-                configureBlocking(true)  // Use BLOCKING mode for efficiency
+                configureBlocking(false)  // Non-blocking for lock-free architecture
 
-                // Optimize socket for low-latency streaming
+                // Optimize socket for high-throughput streaming
                 socket().apply {
-                    sendBufferSize = 2 * 1024 * 1024  // 2MB send buffer for burst tolerance
+                    sendBufferSize = 8 * 1024 * 1024  // 8MB send buffer for 57Mbps+
+                    receiveBufferSize = 256 * 1024     // Small receive buffer (we don't receive)
                     trafficClass = 0x10  // IPTOS_LOWDELAY for low latency
                     reuseAddress = true
                 }
@@ -201,10 +202,11 @@ class UDPSender(
         val channel = this.channel ?: return
         val remoteAddress = this.remoteAddress ?: return
 
-        Log.i(TAG, "Sender loop started (high priority thread, BLOCKING mode)")
+        Log.i(TAG, "Sender loop started (high priority thread, non-blocking)")
 
         var consecutiveErrors = 0
         val maxConsecutiveErrors = 10
+        var backoffCount = 0
 
         while (isRunning.get() && !Thread.currentThread().isInterrupted) {
             try {
@@ -216,7 +218,7 @@ class UDPSender(
                     val rIdx = readIndex.get()
                     val slot = packetQueue[rIdx]
 
-                    // Send packet (BLOCKING - will wait until sent)
+                    // Send packet (non-blocking)
                     slot.buffer.rewind()
                     val bytesSentNow = channel.send(slot.buffer, remoteAddress)
 
@@ -225,19 +227,37 @@ class UDPSender(
                         Log.d(TAG, "Sent packet ${packetsSent.get() + 1}: $bytesSentNow bytes to $remoteAddress")
                     }
 
-                    // In blocking mode, send() should always succeed
-                    packetsSent.incrementAndGet()
-                    bytesSent.addAndGet(bytesSentNow.toLong())
-                    consecutiveErrors = 0
+                    if (bytesSentNow > 0) {
+                        // Successfully sent
+                        packetsSent.incrementAndGet()
+                        bytesSent.addAndGet(bytesSentNow.toLong())
+                        consecutiveErrors = 0
+                        backoffCount = 0  // Reset backoff on success
 
-                    // Advance read index (lock-free)
-                    readIndex.set((rIdx + 1) % queueCapacity)
+                        // Advance read index (lock-free)
+                        readIndex.set((rIdx + 1) % queueCapacity)
 
-                    // Decrement count atomically
-                    queueCount.decrementAndGet()
+                        // Decrement count atomically
+                        queueCount.decrementAndGet()
+                    } else {
+                        // Send buffer full - backoff with exponential delay
+                        backoffCount++
+                        if (backoffCount < 10) {
+                            // Short spin for transient congestion
+                            Thread.yield()
+                        } else {
+                            // Longer sleep for sustained congestion (50 microseconds)
+                            Thread.sleep(0, 50_000)
+                        }
+
+                        if (backoffCount % 1000 == 0) {
+                            Log.w(TAG, "Send buffer full for $backoffCount iterations, queue: $count/$queueCapacity")
+                        }
+                    }
                 } else {
                     // No packets to send, sleep briefly to avoid busy-wait
-                    Thread.sleep(1)  // 1ms - balance between latency and CPU usage
+                    Thread.sleep(0, 100_000)  // 100 microseconds
+                    backoffCount = 0
                 }
 
             } catch (e: InterruptedException) {
