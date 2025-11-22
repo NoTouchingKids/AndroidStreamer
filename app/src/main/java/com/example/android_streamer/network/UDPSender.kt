@@ -61,13 +61,13 @@ class UDPSender(
         }
 
         try {
-            // Create non-blocking DatagramChannel
+            // Create blocking DatagramChannel for reliable packet delivery
             channel = DatagramChannel.open().apply {
-                configureBlocking(false)
+                configureBlocking(true)  // Use BLOCKING mode for efficiency
 
                 // Optimize socket for low-latency streaming
                 socket().apply {
-                    sendBufferSize = 1024 * 1024  // 1MB send buffer for burst tolerance
+                    sendBufferSize = 2 * 1024 * 1024  // 2MB send buffer for burst tolerance
                     trafficClass = 0x10  // IPTOS_LOWDELAY for low latency
                     reuseAddress = true
                 }
@@ -201,12 +201,10 @@ class UDPSender(
         val channel = this.channel ?: return
         val remoteAddress = this.remoteAddress ?: return
 
-        Log.i(TAG, "Sender loop started (high priority thread)")
+        Log.i(TAG, "Sender loop started (high priority thread, BLOCKING mode)")
 
         var consecutiveErrors = 0
         val maxConsecutiveErrors = 10
-        var consecutiveZeroSends = 0
-        val maxConsecutiveZeroSends = 1000  // Warn after many failed sends
 
         while (isRunning.get() && !Thread.currentThread().isInterrupted) {
             try {
@@ -218,7 +216,7 @@ class UDPSender(
                     val rIdx = readIndex.get()
                     val slot = packetQueue[rIdx]
 
-                    // Send packet
+                    // Send packet (BLOCKING - will wait until sent)
                     slot.buffer.rewind()
                     val bytesSentNow = channel.send(slot.buffer, remoteAddress)
 
@@ -227,31 +225,19 @@ class UDPSender(
                         Log.d(TAG, "Sent packet ${packetsSent.get() + 1}: $bytesSentNow bytes to $remoteAddress")
                     }
 
-                    if (bytesSentNow > 0) {
-                        packetsSent.incrementAndGet()
-                        bytesSent.addAndGet(bytesSentNow.toLong())
-                        consecutiveErrors = 0
-                        consecutiveZeroSends = 0
+                    // In blocking mode, send() should always succeed
+                    packetsSent.incrementAndGet()
+                    bytesSent.addAndGet(bytesSentNow.toLong())
+                    consecutiveErrors = 0
 
-                        // Advance read index (lock-free)
-                        readIndex.set((rIdx + 1) % queueCapacity)
+                    // Advance read index (lock-free)
+                    readIndex.set((rIdx + 1) % queueCapacity)
 
-                        // Decrement count atomically
-                        queueCount.decrementAndGet()
-                    } else {
-                        // Channel not ready (buffer full or send failed), yield and retry
-                        consecutiveZeroSends++
-                        if (consecutiveZeroSends == maxConsecutiveZeroSends) {
-                            Log.e(TAG, "Send failing repeatedly ($consecutiveZeroSends times). Queue: $count/$queueCapacity. Channel may be blocked!")
-                        } else if (consecutiveZeroSends % 100 == 0) {
-                            Log.w(TAG, "Send returned 0 bytes $consecutiveZeroSends times. Queue: $count/$queueCapacity")
-                        }
-                        Thread.yield()
-                    }
+                    // Decrement count atomically
+                    queueCount.decrementAndGet()
                 } else {
                     // No packets to send, sleep briefly to avoid busy-wait
-                    // Use very short sleep for low latency
-                    Thread.sleep(0, 50_000) // 50 microseconds
+                    Thread.sleep(1)  // 1ms - balance between latency and CPU usage
                 }
 
             } catch (e: InterruptedException) {
