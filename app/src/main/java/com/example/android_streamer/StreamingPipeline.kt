@@ -214,7 +214,8 @@ class StreamingPipeline(
             }
 
             // Bind to source port declared in RTSP SETUP (critical for MediaMTX)
-            val rtpSourcePort = if (config.useRtsp) config.rtpPort else null
+            // TEMPORARILY DISABLED: Testing if port binding causes performance issues
+            val rtpSourcePort = null // if (config.useRtsp) config.rtpPort else null
 
             Log.i(TAG, "Creating UDP sender: ${config.remoteHost}:$rtpDestPort (source port: ${rtpSourcePort ?: "auto"})")
             sender = UDPSender(config.remoteHost, rtpDestPort, rtpSourcePort).apply {
@@ -231,11 +232,12 @@ class StreamingPipeline(
                 }
 
                 // Bind to source port declared in RTSP SETUP (critical for MediaMTX)
+                // TEMPORARILY DISABLED: Testing if port binding causes performance issues
                 rtcpSender = RTCPSender(
                     remoteHost = config.remoteHost,
                     remotePort = rtcpDestPort,
                     ssrc = packetizer!!.ssrc.toLong(),
-                    localPort = config.rtcpPort  // Bind to port declared in SETUP
+                    localPort = null  // config.rtcpPort - disabled for testing
                 )
                 rtcpSender!!.start()
                 Log.i(TAG, "RTCP sender using destination port: $rtcpDestPort")

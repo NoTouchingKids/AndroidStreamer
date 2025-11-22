@@ -42,7 +42,7 @@ class UDPSender(
     private var senderThread: Thread? = null
 
     // Lock-free SPSC ring buffer
-    private val queueCapacity = 512  // Increased for burst handling
+    private val queueCapacity = 2048  // Increased for high bitrate 1080p@60fps
     private val packetQueue = Array(queueCapacity) { PacketSlot() }
 
     // Use AtomicInteger for lock-free SPSC queue
