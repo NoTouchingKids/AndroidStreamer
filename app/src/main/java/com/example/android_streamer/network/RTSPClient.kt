@@ -156,14 +156,17 @@ class RTSPClient(
             .find { it.startsWith("Transport:", ignoreCase = true) }
 
         if (transportLine != null) {
+            Log.d(TAG, "Transport line: $transportLine")
             val serverPortMatch = Regex("server_port=(\\d+)-(\\d+)").find(transportLine)
             if (serverPortMatch != null) {
                 serverRtpPort = serverPortMatch.groupValues[1].toInt()
                 serverRtcpPort = serverPortMatch.groupValues[2].toInt()
-                Log.i(TAG, "Server ports: RTP=$serverRtpPort, RTCP=$serverRtcpPort")
+                Log.i(TAG, "Extracted server ports: RTP=$serverRtpPort, RTCP=$serverRtcpPort")
             } else {
-                Log.w(TAG, "Could not extract server_port from Transport header")
+                Log.w(TAG, "Could not extract server_port from Transport header: $transportLine")
             }
+        } else {
+            Log.w(TAG, "No Transport header found in SETUP response")
         }
 
         sessionId != null

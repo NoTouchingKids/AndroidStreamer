@@ -73,6 +73,7 @@ class UDPSender(
             }
 
             remoteAddress = InetSocketAddress(remoteHost, remotePort)
+            Log.i(TAG, "UDP sender destination resolved: $remoteAddress")
 
             // Validate connectivity (optional - comment out if not needed)
             validateConnectivity()
@@ -83,7 +84,7 @@ class UDPSender(
                 start()
             }
 
-            Log.i(TAG, "UDP sender started: $remoteHost:$remotePort (MediaMTX optimized)")
+            Log.i(TAG, "UDP sender started: $remoteHost:$remotePort -> $remoteAddress (MediaMTX optimized)")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start UDP sender", e)
             isRunning.set(false)

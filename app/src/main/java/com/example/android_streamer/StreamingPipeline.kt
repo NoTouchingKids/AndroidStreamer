@@ -206,15 +206,18 @@ class StreamingPipeline(
             // 8. Create UDP sender (RTP data plane)
             // Use server ports from RTSP SETUP if available, otherwise use config ports
             val rtpDestPort = if (config.useRtsp && rtspClient!!.serverRtpPort != 0) {
+                Log.d(TAG, "Using server RTP port from RTSP SETUP: ${rtspClient!!.serverRtpPort}")
                 rtspClient!!.serverRtpPort
             } else {
+                Log.d(TAG, "Using config RTP port: ${config.rtpPort}")
                 config.rtpPort
             }
 
+            Log.i(TAG, "Creating UDP sender: ${config.remoteHost}:$rtpDestPort")
             sender = UDPSender(config.remoteHost, rtpDestPort).apply {
                 start()
             }
-            Log.i(TAG, "UDP sender using destination port: $rtpDestPort")
+            Log.i(TAG, "UDP sender started successfully, destination: ${config.remoteHost}:$rtpDestPort")
 
             // 9. Create RTCP sender (async control plane) - if RTSP enabled
             if (config.useRtsp) {
@@ -297,18 +300,32 @@ class StreamingPipeline(
      * Handle encoded data from MediaCodec.
      * Called on encoder callback thread (RTP data plane - unchanged).
      */
+    private var encodedFrameCount = 0
     private fun handleEncodedData(buffer: ByteBuffer, info: MediaCodec.BufferInfo) {
         val pkt = packetizer ?: return
         val snd = sender ?: return
 
+        encodedFrameCount++
+        if (encodedFrameCount <= 5) {
+            Log.d(TAG, "Encoded frame #$encodedFrameCount: size=${info.size}, flags=0x${info.flags.toString(16)}")
+        }
+
         try {
+            var rtpPacketCount = 0
             // Packetize H.265 NAL units into RTP packets
             pkt.packetize(buffer, info) { rtpPacket ->
+                rtpPacketCount++
                 // Send RTP packet over UDP (lock-free SPSC queue)
                 val packetCopy = rtpPacket.duplicate() // Duplicate for async send
                 if (!snd.sendPacket(packetCopy)) {
                     Log.w(TAG, "Failed to send RTP packet (queue full)")
+                } else if (encodedFrameCount <= 5) {
+                    Log.d(TAG, "Queued RTP packet #$rtpPacketCount from frame #$encodedFrameCount (${rtpPacket.remaining()} bytes)")
                 }
+            }
+
+            if (encodedFrameCount <= 5) {
+                Log.d(TAG, "Frame #$encodedFrameCount produced $rtpPacketCount RTP packets")
             }
 
             // Update RTCP statistics (async control plane)
