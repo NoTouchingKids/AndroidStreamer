@@ -42,7 +42,7 @@ class UDPSender(
     private var senderThread: Thread? = null
 
     // Lock-free SPSC ring buffer
-    private val queueCapacity = 2048  // Increased for high bitrate 1080p@60fps
+    private val queueCapacity = 8192  // Increased for ultra-high bitrate 4K60@500Mbps
     private val packetQueue = Array(queueCapacity) { PacketSlot() }
 
     // Use AtomicInteger for lock-free SPSC queue
@@ -67,8 +67,8 @@ class UDPSender(
 
                 // Optimize socket for high-throughput streaming
                 socket().apply {
-                    sendBufferSize = 8 * 1024 * 1024  // 8MB send buffer for 57Mbps+
-                    receiveBufferSize = 256 * 1024     // Small receive buffer (we don't receive)
+                    sendBufferSize = 32 * 1024 * 1024  // 32MB send buffer for 500Mbps
+                    receiveBufferSize = 256 * 1024      // Small receive buffer (we don't receive)
                     trafficClass = 0x10  // IPTOS_LOWDELAY for low latency
                     reuseAddress = true
                 }
