@@ -17,7 +17,8 @@ import java.nio.channels.DatagramChannel
 class RTCPSender(
     private val remoteHost: String,
     private val remotePort: Int,  // RTCP port (typically RTP port + 1)
-    private val ssrc: Long        // Same SSRC as RTP sender
+    private val ssrc: Long,       // Same SSRC as RTP sender
+    private val localPort: Int? = null  // Optional: bind to specific source port for RTSP
 ) {
     companion object {
         private const val TAG = "RTCPSender"
@@ -54,6 +55,12 @@ class RTCPSender(
             channel = DatagramChannel.open().apply {
                 configureBlocking(false)
                 socket().reuseAddress = true
+
+                // Bind to specific source port if requested (required for RTSP)
+                if (localPort != null) {
+                    bind(InetSocketAddress(localPort))
+                    Log.i(TAG, "Bound RTCP to local port: $localPort")
+                }
             }
 
             val remoteAddress = InetSocketAddress(remoteHost, remotePort)
@@ -61,7 +68,7 @@ class RTCPSender(
 
             isRunning = true
 
-            Log.i(TAG, "RTCP sender started to $remoteHost:$remotePort")
+            Log.i(TAG, "RTCP sender started to $remoteHost:$remotePort (source port: ${localPort ?: "auto"})")
 
             // Start periodic SR sending
             startSenderReportLoop()

@@ -25,7 +25,8 @@ import java.util.concurrent.atomic.AtomicLong
  */
 class UDPSender(
     private val remoteHost: String,
-    private val remotePort: Int
+    private val remotePort: Int,
+    private val localPort: Int? = null  // Optional: bind to specific source port for RTSP
 ) {
     private var channel: DatagramChannel? = null
     private var remoteAddress: InetSocketAddress? = null
@@ -69,6 +70,14 @@ class UDPSender(
                     sendBufferSize = 1024 * 1024  // 1MB send buffer for burst tolerance
                     trafficClass = 0x10  // IPTOS_LOWDELAY for low latency
                     reuseAddress = true
+                }
+
+                // Bind to specific source port if requested (required for RTSP)
+                if (localPort != null) {
+                    bind(InetSocketAddress(localPort))
+                    Log.i(TAG, "Bound to local port: $localPort")
+                } else {
+                    Log.d(TAG, "Using OS-assigned ephemeral port")
                 }
             }
 
