@@ -74,8 +74,14 @@ class UDPSender(
 
                 // Bind to specific source port if requested (required for RTSP)
                 if (localPort != null) {
-                    bind(InetSocketAddress(localPort))
-                    Log.i(TAG, "Bound to local port: $localPort")
+                    try {
+                        bind(InetSocketAddress(localPort))
+                        val actualPort = socket().localPort
+                        Log.i(TAG, "Successfully bound to local port: $localPort (actual: $actualPort)")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to bind to port $localPort, using ephemeral port", e)
+                        // Continue without binding - will use ephemeral port
+                    }
                 } else {
                     Log.d(TAG, "Using OS-assigned ephemeral port")
                 }
@@ -199,6 +205,8 @@ class UDPSender(
 
         var consecutiveErrors = 0
         val maxConsecutiveErrors = 10
+        var consecutiveZeroSends = 0
+        val maxConsecutiveZeroSends = 1000  // Warn after many failed sends
 
         while (isRunning.get() && !Thread.currentThread().isInterrupted) {
             try {
@@ -223,6 +231,7 @@ class UDPSender(
                         packetsSent.incrementAndGet()
                         bytesSent.addAndGet(bytesSentNow.toLong())
                         consecutiveErrors = 0
+                        consecutiveZeroSends = 0
 
                         // Advance read index (lock-free)
                         readIndex.set((rIdx + 1) % queueCapacity)
@@ -230,7 +239,13 @@ class UDPSender(
                         // Decrement count atomically
                         queueCount.decrementAndGet()
                     } else {
-                        // Channel not ready (buffer full), yield and retry
+                        // Channel not ready (buffer full or send failed), yield and retry
+                        consecutiveZeroSends++
+                        if (consecutiveZeroSends == maxConsecutiveZeroSends) {
+                            Log.e(TAG, "Send failing repeatedly ($consecutiveZeroSends times). Queue: $count/$queueCapacity. Channel may be blocked!")
+                        } else if (consecutiveZeroSends % 100 == 0) {
+                            Log.w(TAG, "Send returned 0 bytes $consecutiveZeroSends times. Queue: $count/$queueCapacity")
+                        }
                         Thread.yield()
                     }
                 } else {
